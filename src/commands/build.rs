@@ -622,7 +622,7 @@ mod tests {
         let bin_targets = get_binary_targets(
             &available_targets,
             relative_path,
-            &vec!["main*".to_string()],
+            &["main*".to_string()],
             false,
         );
         assert_eq!(bin_targets.len(), 1);
@@ -632,7 +632,7 @@ mod tests {
     #[test]
     fn test_edge_cases() {
         // Test empty patterns
-        let targets = get_binary_targets(&[], "", &vec![], false);
+        let targets = get_binary_targets(&[], "", &[], false);
         assert!(targets.is_empty());
 
         // Test invalid regex pattern (should not panic)
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn test_binary_targets_all_bins() {
         let available_targets = create_test_targets();
-        let targets = get_binary_targets(&available_targets, "src/", &vec![], true);
+        let targets = get_binary_targets(&available_targets, "src/", &[], true);
 
         // Should find main_bin, cli_tool, app1, app2, test_app, demo_app
         assert!(targets.len() >= 6);
@@ -660,7 +660,7 @@ mod tests {
         let targets = get_binary_targets(
             &available_targets,
             "src/",
-            &vec!["test*".to_string(), "demo*".to_string()],
+            &["test*".to_string(), "demo*".to_string()],
             false,
         );
 
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn test_example_targets_all_examples() {
         let available_targets = create_test_targets();
-        let targets = get_example_targets(&available_targets, "examples/", &vec![], true);
+        let targets = get_example_targets(&available_targets, "examples/", &[], true);
 
         // Should find all examples
         assert_eq!(targets.len(), 3);
@@ -688,7 +688,7 @@ mod tests {
         let targets = get_example_targets(
             &available_targets,
             "examples/",
-            &vec!["demo*".to_string()],
+            &["demo*".to_string()],
             false,
         );
 
@@ -740,17 +740,12 @@ mod tests {
         let available_targets = vec!["//src:lib1".to_string()];
 
         // Try to find binaries when only libraries exist
-        let targets =
-            get_binary_targets(&available_targets, "src/", &vec!["app*".to_string()], false);
+        let targets = get_binary_targets(&available_targets, "src/", &["app*".to_string()], false);
         assert!(targets.is_empty());
 
         // Try to find examples when none exist
-        let targets = get_example_targets(
-            &available_targets,
-            "src/",
-            &vec!["example*".to_string()],
-            false,
-        );
+        let targets =
+            get_example_targets(&available_targets, "src/", &["example*".to_string()], false);
         assert!(targets.is_empty());
     }
 
