@@ -296,7 +296,10 @@ system_genrule_toolchain(
 
     // Write platforms/BUCK with a Tier1-ish set of Rust triples.
     let mut platforms = std::fs::File::create(dest.join("platforms/BUCK"))?;
-    writeln!(platforms, "# Target platforms expressed using Rust-style triples.")?;
+    writeln!(
+        platforms,
+        "# Target platforms expressed using Rust-style triples."
+    )?;
     writeln!(
         platforms,
         "# These are intended for `--target-platforms` and to make `select()`s in"

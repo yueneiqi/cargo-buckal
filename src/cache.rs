@@ -8,6 +8,8 @@ use crate::utils::{UnwrapOrExit, get_cache_path};
 
 // type Fingerprint = [u8; 32];
 
+const CACHE_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Fingerprint([u8; 32]);
 
@@ -101,14 +103,14 @@ impl BuckalCache {
             .collect();
         Self {
             fingerprints,
-            version: 1,
+            version: CACHE_VERSION,
         }
     }
 
     pub fn new_empty() -> Self {
         Self {
             fingerprints: BTreeMap::new(),
-            version: 1,
+            version: CACHE_VERSION,
         }
     }
 
