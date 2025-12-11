@@ -33,12 +33,14 @@ impl Rule {
 
 pub trait RustRule {
     fn deps_mut(&mut self) -> &mut Set<String>;
+    fn os_deps_mut(&mut self) -> &mut Map<String, Set<String>>;
     fn rustc_flags_mut(&mut self) -> &mut Set<String>;
     fn env_mut(&mut self) -> &mut Map<String, String>;
     fn named_deps_mut(&mut self) -> &mut Map<String, String>;
+    fn os_named_deps_mut(&mut self) -> &mut Map<String, Map<String, String>>;
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum CargoTargetKind {
     Lib,
     Bin,
@@ -97,6 +99,10 @@ pub struct RustLibrary {
     pub proc_macro: Option<bool>,
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub named_deps: Map<String, String>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub os_named_deps: Map<String, Map<String, String>>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub os_deps: Map<String, Set<String>>,
     pub visibility: Set<String>,
     #[serde(skip_serializing_if = "Set::is_empty")]
     pub deps: Set<String>,
@@ -125,6 +131,10 @@ pub struct RustBinary {
     pub rustc_flags: Set<String>,
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub named_deps: Map<String, String>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub os_named_deps: Map<String, Map<String, String>>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub os_deps: Map<String, Set<String>>,
     pub visibility: Set<String>,
     #[serde(skip_serializing_if = "Set::is_empty")]
     pub deps: Set<String>,
@@ -153,6 +163,10 @@ pub struct RustTest {
     pub rustc_flags: Set<String>,
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub named_deps: Map<String, String>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub os_named_deps: Map<String, Map<String, String>>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub os_deps: Map<String, Set<String>>,
     pub visibility: Set<String>,
     #[serde(skip_serializing_if = "Set::is_empty")]
     pub deps: Set<String>,
@@ -261,6 +275,10 @@ impl RustRule for RustLibrary {
         &mut self.deps
     }
 
+    fn os_deps_mut(&mut self) -> &mut Map<String, Set<String>> {
+        &mut self.os_deps
+    }
+
     fn rustc_flags_mut(&mut self) -> &mut Set<String> {
         &mut self.rustc_flags
     }
@@ -271,6 +289,10 @@ impl RustRule for RustLibrary {
 
     fn named_deps_mut(&mut self) -> &mut Map<String, String> {
         &mut self.named_deps
+    }
+
+    fn os_named_deps_mut(&mut self) -> &mut Map<String, Map<String, String>> {
+        &mut self.os_named_deps
     }
 }
 
@@ -279,6 +301,10 @@ impl RustRule for RustBinary {
         &mut self.deps
     }
 
+    fn os_deps_mut(&mut self) -> &mut Map<String, Set<String>> {
+        &mut self.os_deps
+    }
+
     fn rustc_flags_mut(&mut self) -> &mut Set<String> {
         &mut self.rustc_flags
     }
@@ -289,6 +315,10 @@ impl RustRule for RustBinary {
 
     fn named_deps_mut(&mut self) -> &mut Map<String, String> {
         &mut self.named_deps
+    }
+
+    fn os_named_deps_mut(&mut self) -> &mut Map<String, Map<String, String>> {
+        &mut self.os_named_deps
     }
 }
 
@@ -297,6 +327,10 @@ impl RustRule for RustTest {
         &mut self.deps
     }
 
+    fn os_deps_mut(&mut self) -> &mut Map<String, Set<String>> {
+        &mut self.os_deps
+    }
+
     fn rustc_flags_mut(&mut self) -> &mut Set<String> {
         &mut self.rustc_flags
     }
@@ -307,6 +341,10 @@ impl RustRule for RustTest {
 
     fn named_deps_mut(&mut self) -> &mut Map<String, String> {
         &mut self.named_deps
+    }
+
+    fn os_named_deps_mut(&mut self) -> &mut Map<String, Map<String, String>> {
+        &mut self.os_named_deps
     }
 }
 
@@ -350,6 +388,8 @@ impl RustLibrary {
         let rustc_flags: Set<String> = extract_set!(kwargs, "rustc_flags");
         let proc_macro: Option<bool> = get_arg(kwargs, "proc_macro");
         let named_deps: Map<String, String> = get_arg(kwargs, "named_deps");
+        let os_named_deps: Map<String, Map<String, String>> = get_arg(kwargs, "os_named_deps");
+        let os_deps: Map<String, Set<String>> = get_arg(kwargs, "os_deps");
         let visibility: Set<String> = extract_set!(kwargs, "visibility");
         let deps: Set<String> = extract_set!(kwargs, "deps");
         Ok(RustLibrary {
@@ -366,6 +406,8 @@ impl RustLibrary {
             rustc_flags,
             proc_macro,
             named_deps,
+            os_named_deps,
+            os_deps,
             visibility,
             deps,
         })
@@ -403,6 +445,23 @@ impl RustLibrary {
         if patch_fields.contains("visibility") {
             patch_set(&mut self.visibility, &other.visibility);
         }
+
+        if patch_fields.contains("deps") {
+            patch_set(&mut self.deps, &other.deps);
+        }
+
+        if patch_fields.contains("os_deps") {
+            for (plat, deps) in &other.os_deps {
+                patch_set(self.os_deps.entry(plat.clone()).or_default(), deps);
+            }
+        }
+
+        if patch_fields.contains("os_named_deps") {
+            for (alias, plat_map) in &other.os_named_deps {
+                let entry = self.os_named_deps.entry(alias.clone()).or_default();
+                patch_map(entry, plat_map);
+            }
+        }
     }
 }
 
@@ -420,6 +479,8 @@ impl RustBinary {
         let features: Set<String> = extract_set!(kwargs, "features");
         let rustc_flags: Set<String> = extract_set!(kwargs, "rustc_flags");
         let named_deps: Map<String, String> = get_arg(kwargs, "named_deps");
+        let os_named_deps: Map<String, Map<String, String>> = get_arg(kwargs, "os_named_deps");
+        let os_deps: Map<String, Set<String>> = get_arg(kwargs, "os_deps");
         let visibility: Set<String> = extract_set!(kwargs, "visibility");
         let deps: Set<String> = extract_set!(kwargs, "deps");
         Ok(RustBinary {
@@ -435,6 +496,8 @@ impl RustBinary {
             features,
             rustc_flags,
             named_deps,
+            os_named_deps,
+            os_deps,
             visibility,
             deps,
         })
@@ -472,6 +535,23 @@ impl RustBinary {
         if patch_fields.contains("visibility") {
             patch_set(&mut self.visibility, &other.visibility);
         }
+
+        if patch_fields.contains("deps") {
+            patch_set(&mut self.deps, &other.deps);
+        }
+
+        if patch_fields.contains("os_deps") {
+            for (plat, deps) in &other.os_deps {
+                patch_set(self.os_deps.entry(plat.clone()).or_default(), deps);
+            }
+        }
+
+        if patch_fields.contains("os_named_deps") {
+            for (alias, plat_map) in &other.os_named_deps {
+                let entry = self.os_named_deps.entry(alias.clone()).or_default();
+                patch_map(entry, plat_map);
+            }
+        }
     }
 }
 
@@ -489,6 +569,8 @@ impl RustTest {
         let features: Set<String> = extract_set!(kwargs, "features");
         let rustc_flags: Set<String> = extract_set!(kwargs, "rustc_flags");
         let named_deps: Map<String, String> = get_arg(kwargs, "named_deps");
+        let os_named_deps: Map<String, Map<String, String>> = get_arg(kwargs, "os_named_deps");
+        let os_deps: Map<String, Set<String>> = get_arg(kwargs, "os_deps");
         let visibility: Set<String> = extract_set!(kwargs, "visibility");
         let deps: Set<String> = extract_set!(kwargs, "deps");
         Ok(RustTest {
@@ -504,6 +586,8 @@ impl RustTest {
             features,
             rustc_flags,
             named_deps,
+            os_named_deps,
+            os_deps,
             visibility,
             deps,
         })
@@ -540,6 +624,23 @@ impl RustTest {
         // Patch visibility set
         if patch_fields.contains("visibility") {
             patch_set(&mut self.visibility, &other.visibility);
+        }
+
+        if patch_fields.contains("deps") {
+            patch_set(&mut self.deps, &other.deps);
+        }
+
+        if patch_fields.contains("os_deps") {
+            for (plat, deps) in &other.os_deps {
+                patch_set(self.os_deps.entry(plat.clone()).or_default(), deps);
+            }
+        }
+
+        if patch_fields.contains("os_named_deps") {
+            for (alias, plat_map) in &other.os_named_deps {
+                let entry = self.os_named_deps.entry(alias.clone()).or_default();
+                patch_map(entry, plat_map);
+            }
         }
     }
 }

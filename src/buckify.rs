@@ -6,7 +6,7 @@ use std::{
 };
 
 use cargo_metadata::{
-    DepKindInfo, DependencyKind, Node, Package, PackageId, Target, camino::Utf8PathBuf,
+    DependencyKind, Node, NodeDep, Package, PackageId, Target, camino::Utf8PathBuf,
 };
 use itertools::Itertools;
 use regex::Regex;
@@ -22,7 +22,7 @@ use crate::{
     buckal_log,
     cache::{BuckalChange, ChangeType},
     context::BuckalContext,
-    platform::lookup_platforms,
+    platform::{Os, buck_labels, lookup_platforms, oses_from_platform},
     utils::{UnwrapOrExit, get_buck2_root, get_cfgs, get_target, get_vendor_dir},
 };
 
@@ -283,6 +283,7 @@ pub fn gen_buck_content(rules: &[Rule]) -> String {
                 "buildscript_run".to_owned(),
                 "rust_binary".to_owned(),
                 "rust_library".to_owned(),
+                "rust_test".to_owned(),
             ]),
         }),
     ];
@@ -305,16 +306,107 @@ pub fn gen_buck_content(rules: &[Rule]) -> String {
     content
 }
 
-pub fn check_dep_target(dk: &DepKindInfo) -> bool {
-    if dk.target.is_none() {
-        return true; // No target specified
+fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> bool {
+    match target_kind {
+        CargoTargetKind::CustomBuild => dep_kind == DependencyKind::Build,
+        CargoTargetKind::Test => dep_kind == DependencyKind::Development,
+        _ => dep_kind == DependencyKind::Normal,
     }
+}
 
-    let platform = dk.target.as_ref().unwrap();
-    let target = get_target();
-    let cfgs = get_cfgs();
+fn resolve_dep_label(dep: &NodeDep, dep_package: &Package) -> Option<(String, Option<String>)> {
+    let dep_package_name = dep_package.name.to_string();
+    let is_renamed = dep.name != dep_package_name.replace("-", "_");
+    let alias = if is_renamed {
+        Some(dep.name.clone())
+    } else {
+        None
+    };
 
-    platform.matches(&target, &cfgs[..])
+    if dep_package.source.is_none() {
+        // first-party dependency
+        let buck2_root = get_buck2_root().ok()?;
+        let manifest_path = PathBuf::from(&dep_package.manifest_path);
+        let manifest_dir = manifest_path.parent().unwrap();
+        let relative = manifest_dir.strip_prefix(&buck2_root).ok()?;
+
+        let mut relative_path = relative.to_string_lossy().into_owned();
+        if !relative_path.is_empty() {
+            relative_path += "/";
+        }
+
+        let target = format!("//{relative_path}...");
+        let output = Buck2Command::targets()
+            .arg(target)
+            .arg("--json")
+            .output()
+            .expect("Failed to execute buck2 command");
+        if !output.status.success() {
+            panic!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+        let targets: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let target_item = targets
+            .iter()
+            .find(|t| {
+                t.get("buck.type")
+                    .and_then(|k| k.as_str())
+                    .is_some_and(|k| k.ends_with("rust_library"))
+            })
+            .expect("Failed to find rust library rule in BUCK file");
+        let buck_package = target_item
+            .get("buck.package")
+            .and_then(|n| n.as_str())
+            .expect("Failed to get target name")
+            .strip_prefix("root")
+            .unwrap();
+        let buck_name = target_item
+            .get("name")
+            .and_then(|n| n.as_str())
+            .expect("Failed to get target name");
+
+        Some((format!("{buck_package}:{buck_name}"), alias))
+    } else {
+        // third-party dependency
+        Some((
+            format!(
+                "//{RUST_CRATES_ROOT}/{}/{}:{}",
+                dep_package.name, dep_package.version, dep_package.name
+            ),
+            alias,
+        ))
+    }
+}
+
+fn insert_dep(
+    rust_rule: &mut dyn RustRule,
+    target: &str,
+    alias: Option<&str>,
+    platforms: Option<&std::collections::BTreeSet<Os>>,
+) {
+    if let Some(platforms) = platforms {
+        for os in platforms {
+            let os_key = os.key().to_owned();
+            if let Some(alias) = alias {
+                rust_rule
+                    .os_named_deps_mut()
+                    .entry(alias.to_owned())
+                    .or_default()
+                    .insert(os_key.clone(), target.to_owned());
+            } else {
+                rust_rule
+                    .os_deps_mut()
+                    .entry(os_key)
+                    .or_default()
+                    .insert(target.to_owned());
+            }
+        }
+    } else if let Some(alias) = alias {
+        rust_rule
+            .named_deps_mut()
+            .insert(alias.to_owned(), target.to_owned());
+    } else {
+        rust_rule.deps_mut().insert(target.to_owned());
+    }
 }
 
 fn set_deps(
@@ -324,96 +416,39 @@ fn set_deps(
     kind: CargoTargetKind,
 ) {
     for dep in &node.deps {
-        if let Some(dep_package) = packages_map.get(&dep.pkg) {
-            let dep_package_name = dep_package.name.to_string();
-            if dep.dep_kinds.iter().any(|dk| {
-                (kind != CargoTargetKind::CustomBuild && dk.kind == DependencyKind::Normal
-                    || kind == CargoTargetKind::CustomBuild && dk.kind == DependencyKind::Build
-                    || kind == CargoTargetKind::Test && dk.kind == DependencyKind::Development)
-                    && check_dep_target(dk)
-            }) {
-                // Normal dependencies and build dependencies for `build.rs` on current arch
-                if dep_package.source.is_none() {
-                    // first-party dependency
-                    let buck2_root =
-                        get_buck2_root().unwrap_or_exit_ctx("failed to get buck2 root");
-                    let manifest_path = PathBuf::from(&dep_package.manifest_path);
-                    let manifest_dir = manifest_path.parent().unwrap();
-                    let relative = manifest_dir.strip_prefix(&buck2_root).ok();
+        let Some(dep_package) = packages_map.get(&dep.pkg) else {
+            continue;
+        };
 
-                    if relative.is_none() {
-                        eprintln!("error: Current directory is not inside the Buck2 project root.");
-                        return;
-                    }
-                    let mut relative_path = relative.unwrap().to_string_lossy().into_owned();
+        let matching_platforms: Vec<Option<std::collections::BTreeSet<Os>>> = dep
+            .dep_kinds
+            .iter()
+            .filter(|dk| dep_kind_matches(kind, dk.kind))
+            .map(|dk| {
+                dk.target
+                    .as_ref()
+                    .map(|platform| {
+                        let oses = oses_from_platform(platform);
+                        if oses.is_empty() { None } else { Some(oses) }
+                    })
+                    .flatten()
+            })
+            .collect();
 
-                    if !relative_path.is_empty() {
-                        relative_path += "/";
-                    }
+        if matching_platforms.is_empty() {
+            continue;
+        }
 
-                    let target = format!("//{relative_path}...");
+        let (target_label, alias) =
+            resolve_dep_label(dep, dep_package).expect("Failed to resolve dependency label");
 
-                    match Buck2Command::targets().arg(target).arg("--json").output() {
-                        Ok(output) if output.status.success() => {
-                            let json_str = String::from_utf8_lossy(&output.stdout);
-                            let targets: Vec<Value> = serde_json::from_str(&json_str).unwrap();
-                            let target_item = targets
-                                .iter()
-                                .find(|t| {
-                                    t.get("buck.type")
-                                        .and_then(|k| k.as_str())
-                                        .is_some_and(|k| k.ends_with("rust_library"))
-                                })
-                                .expect("Failed to find rust library rule in BUCK file");
-                            let buck_package = target_item
-                                .get("buck.package")
-                                .and_then(|n| n.as_str())
-                                .expect("Failed to get target name")
-                                .strip_prefix("root")
-                                .unwrap();
-                            let buck_name = target_item
-                                .get("name")
-                                .and_then(|n| n.as_str())
-                                .expect("Failed to get target name");
-
-                            if dep.name != dep_package_name.replace("-", "_") {
-                                // renamed dependency
-                                rust_rule.named_deps_mut().insert(
-                                    dep.name.clone(),
-                                    format!("{buck_package}:{buck_name}"),
-                                );
-                            } else {
-                                rust_rule
-                                    .deps_mut()
-                                    .insert(format!("{buck_package}:{buck_name}"));
-                            }
-                        }
-                        Ok(output) => {
-                            panic!("{}", String::from_utf8_lossy(&output.stderr));
-                        }
-                        Err(e) => {
-                            panic!("Failed to execute buck2 command: {}", e);
-                        }
-                    }
-                } else {
-                    // third-party dependency
-                    if dep.name != dep_package_name.replace("-", "_") {
-                        // renamed dependency
-                        rust_rule.named_deps_mut().insert(
-                            dep.name.clone(),
-                            format!(
-                                "//{RUST_CRATES_ROOT}/{}/{}:{}",
-                                dep_package.name, dep_package.version, dep_package.name
-                            ),
-                        );
-                    } else {
-                        rust_rule.deps_mut().insert(format!(
-                            "//{RUST_CRATES_ROOT}/{}/{}:{}",
-                            dep_package.name, dep_package.version, dep_package.name
-                        ));
-                    }
-                }
-            }
+        for platforms in matching_platforms {
+            insert_dep(
+                rust_rule,
+                &target_label,
+                alias.as_deref(),
+                platforms.as_ref(),
+            );
         }
     }
 }
@@ -459,8 +494,8 @@ fn emit_rust_library(
     );
 
     // look up platform compatibility
-    if let Some(platform) = lookup_platforms(&package.name) {
-        rust_library.compatible_with = platform.to_buck();
+    if let Some(platforms) = lookup_platforms(&package.name) {
+        rust_library.compatible_with = buck_labels(&platforms);
     }
 
     // Set dependencies
@@ -505,6 +540,10 @@ fn emit_rust_binary(
     // Set dependencies
     set_deps(&mut rust_binary, node, packages_map, CargoTargetKind::Bin);
 
+    if let Some(platforms) = lookup_platforms(&package.name) {
+        rust_binary.compatible_with = buck_labels(&platforms);
+    }
+
     rust_binary
 }
 
@@ -543,6 +582,10 @@ fn emit_rust_test(
 
     // Set dependencies
     set_deps(&mut rust_test, node, packages_map, CargoTargetKind::Test);
+
+    if let Some(platforms) = lookup_platforms(&package.name) {
+        rust_test.compatible_with = buck_labels(&platforms);
+    }
 
     rust_test
 }
@@ -611,15 +654,22 @@ fn emit_buildscript_run(
         ..Default::default()
     };
 
+    let host_target = get_target();
+    let host_cfgs = get_cfgs();
+
     // Set environment variables from dependencies
     // See https://doc.rust-lang.org/cargo/reference/build-scripts.html#the-links-manifest-key
     for dep in &node.deps {
         if let Some(dep_package) = packages_map.get(&dep.pkg)
             && dep_package.links.is_some()
-            && dep
-                .dep_kinds
-                .iter()
-                .any(|dk| dk.kind == DependencyKind::Normal && check_dep_target(dk))
+            && dep.dep_kinds.iter().any(|dk| {
+                dep_kind_matches(CargoTargetKind::Lib, dk.kind)
+                    && dk
+                        .target
+                        .as_ref()
+                        .map(|platform| platform.matches(&host_target, &host_cfgs[..]))
+                        .unwrap_or(true)
+            })
         {
             // Only normal dependencies with The links Manifest Key for current arch are considered
             let custom_build_target_dep = dep_package
