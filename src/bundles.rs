@@ -170,6 +170,231 @@ pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Initialize platform-related skeleton files after `buck2 init`.
+///
+/// Buck2's demo toolchains on Linux inject `-fuse-ld=lld`, which breaks
+/// environments without lld and causes cross-arch linkers to default to host
+/// tools. We overwrite `toolchains/BUCK` on Linux with explicit system
+/// toolchains and write a minimal `platforms/BUCK` for common Rust triples on
+/// the host OS.
+pub fn init_platform_files(dest: &std::path::Path) -> Result<()> {
+    let os = std::env::consts::OS;
+
+    // Ensure directories exist.
+    std::fs::create_dir_all(dest.join("toolchains"))?;
+    std::fs::create_dir_all(dest.join("platforms"))?;
+
+    // Overwrite toolchains only on Linux to avoid lld demo toolchain issues.
+    // The generated file is OS-aware so a repo initialized on Linux can be
+    // reused on macOS/Windows without selecting Linux cross tools.
+    if os == "linux" {
+        let mut toolchains = std::fs::File::create(dest.join("toolchains/BUCK"))?;
+        let contents = r#"load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
+load(
+    "@prelude//toolchains:python.bzl",
+    "system_python_bootstrap_toolchain",
+    "system_python_toolchain",
+)
+load("@prelude//toolchains:rust.bzl", "system_rust_toolchain")
+
+# We override the demo toolchains so we can avoid forcing `-fuse-ld=lld`.
+# The bundled demo cxx toolchain uses clang++ and adds `-fuse-ld=lld` on Linux,
+# but some environments don't have lld installed. We also guard Linux cross
+# compiler selection by OS so this file works on macOS/Windows too.
+system_cxx_toolchain(
+    name = "cxx",
+    compiler = select({
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-gcc",
+            "prelude//cpu/constraints:x86_32": "i686-linux-gnu-gcc",
+            "DEFAULT": "gcc",
+        }),
+        "prelude//os/constraints:macos": "clang",
+        "prelude//os/constraints:windows": "cl",
+        "DEFAULT": "cc",
+    }),
+    # Keep `g++` as the C++ compiler on Linux so the prelude doesn't inject
+    # `-fuse-ld=lld` (lld isn't guaranteed to exist). Other OSes use their
+    # native compilers.
+    cxx_compiler = select({
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-g++",
+            "prelude//cpu/constraints:x86_32": "i686-linux-gnu-g++",
+            "DEFAULT": "g++",
+        }),
+        "prelude//os/constraints:macos": "clang++",
+        "prelude//os/constraints:windows": "cl",
+        "DEFAULT": "c++",
+    }),
+    linker = select({
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-g++",
+            "prelude//cpu/constraints:x86_32": "i686-linux-gnu-g++",
+            "DEFAULT": "g++",
+        }),
+        "prelude//os/constraints:macos": "clang++",
+        "prelude//os/constraints:windows": "link",
+        "DEFAULT": "c++",
+    }),
+    # Buck prelude's system C++ toolchain injects `-fuse-ld=lld` into the
+    # linker wrapper. Some environments don't ship `ld.lld`,
+    # so append `-fuse-ld=bfd` to override it for Linux targets.
+    link_flags = select({
+        "prelude//os/constraints:linux": ["-fuse-ld=bfd"],
+        "DEFAULT": [],
+    }),
+    visibility = ["PUBLIC"],
+)
+
+# Buck prelude only maps a small set of CPU constraints to Rust triples by
+# default. We provide an explicit mapping so `--target-platforms` works for
+# x86_32 (i686) and OS-specific triples.
+system_rust_toolchain(
+    name = "rust",
+    rustc_target_triple = select({
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-unknown-linux-gnu",
+            "prelude//cpu/constraints:x86_32": "i686-unknown-linux-gnu",
+            "DEFAULT": "x86_64-unknown-linux-gnu",
+        }),
+        "prelude//os/constraints:macos": select({
+            "prelude//cpu/constraints:arm64": "aarch64-apple-darwin",
+            "DEFAULT": "x86_64-apple-darwin",
+        }),
+        "prelude//os/constraints:windows": select({
+            "prelude//abi/constraints:gnu": "x86_64-pc-windows-gnu",
+            "prelude//abi/constraints:msvc": select({
+                "prelude//cpu/constraints:arm64": "aarch64-pc-windows-msvc",
+                "prelude//cpu/constraints:x86_32": "i686-pc-windows-msvc",
+                "DEFAULT": "x86_64-pc-windows-msvc",
+            }),
+            "DEFAULT": "x86_64-pc-windows-msvc",
+        }),
+        "DEFAULT": "x86_64-unknown-linux-gnu",
+    }),
+    visibility = ["PUBLIC"],
+)
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+system_python_toolchain(
+    name = "python",
+    visibility = ["PUBLIC"],
+)
+
+system_genrule_toolchain(
+    name = "genrule",
+    visibility = ["PUBLIC"],
+)
+"#;
+        toolchains.write_all(contents.as_bytes())?;
+    }
+
+    // Write platforms/BUCK with a Tier1-ish set of Rust triples.
+    let mut platforms = std::fs::File::create(dest.join("platforms/BUCK"))?;
+    writeln!(platforms, "# Target platforms expressed using Rust-style triples.")?;
+    writeln!(
+        platforms,
+        "# These are intended for `--target-platforms` and to make `select()`s in"
+    )?;
+    writeln!(
+        platforms,
+        "# buckal-generated rules match on OS/CPU/ABI constraints."
+    )?;
+    writeln!(platforms)?;
+
+    let mut write_platform = |name: &str, constraints: &[&str]| -> std::io::Result<()> {
+        writeln!(platforms, "platform(")?;
+        writeln!(platforms, "    name = \"{}\",", name)?;
+        writeln!(platforms, "    constraint_values = [")?;
+        for c in constraints {
+            writeln!(platforms, "        \"{}\",", c)?;
+        }
+        writeln!(platforms, "    ],")?;
+        writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+        writeln!(platforms, ")")?;
+        writeln!(platforms)?;
+        Ok(())
+    };
+
+    // macOS
+    write_platform(
+        "aarch64-apple-darwin",
+        &[
+            "prelude//os/constraints:macos",
+            "prelude//cpu/constraints:arm64",
+        ],
+    )?;
+
+    // Windows MSVC
+    write_platform(
+        "aarch64-pc-windows-msvc",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:arm64",
+            "prelude//abi/constraints:msvc",
+        ],
+    )?;
+    write_platform(
+        "x86_64-pc-windows-msvc",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:x86_64",
+            "prelude//abi/constraints:msvc",
+        ],
+    )?;
+    write_platform(
+        "i686-pc-windows-msvc",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:x86_32",
+            "prelude//abi/constraints:msvc",
+        ],
+    )?;
+
+    // Windows GNU (MinGW)
+    write_platform(
+        "x86_64-pc-windows-gnu",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:x86_64",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
+
+    // Linux GNU
+    write_platform(
+        "aarch64-unknown-linux-gnu",
+        &[
+            "prelude//os/constraints:linux",
+            "prelude//cpu/constraints:arm64",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
+    write_platform(
+        "x86_64-unknown-linux-gnu",
+        &[
+            "prelude//os/constraints:linux",
+            "prelude//cpu/constraints:x86_64",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
+    write_platform(
+        "i686-unknown-linux-gnu",
+        &[
+            "prelude//os/constraints:linux",
+            "prelude//cpu/constraints:x86_32",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
+
+    Ok(())
+}
+
 pub fn fetch_buckal_cell(dest: &std::path::Path) -> Result<()> {
     let mut buckconfig = BuckConfig::load(&dest.join(".buckconfig"))?;
     let buckal_section = buckconfig.get_section_mut("external_cell_buckal");

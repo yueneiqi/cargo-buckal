@@ -6,7 +6,7 @@ use crate::{
     RUST_CRATES_ROOT,
     buck2::Buck2Command,
     buckify::flush_root,
-    bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier},
+    bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier, init_platform_files},
     cache::BuckalCache,
     context::BuckalContext,
     utils::{UnwrapOrExit, check_buck2_package, ensure_prerequisites},
@@ -67,6 +67,9 @@ pub fn execute(args: &MigrateArgs) {
         // Configure the buckal cell in .buckconfig
         let cwd = std::env::current_dir().unwrap_or_exit();
         init_buckal_cell(&cwd).unwrap_or_exit();
+
+        // Initialize platform/toolchain skeleton (overwrites demo toolchains on Linux)
+        init_platform_files(&cwd).unwrap_or_exit();
 
         // Init cfg modifiers
         init_modifier(&cwd).unwrap_or_exit();
