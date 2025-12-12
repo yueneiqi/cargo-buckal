@@ -237,6 +237,13 @@ system_cxx_toolchain(
         "prelude//os/constraints:windows": "link",
         "DEFAULT": "c++",
     }),
+    # Buck prelude's system C++ toolchain injects `-fuse-ld=lld` into the
+    # linker wrapper. Some environments don't ship `ld.lld`,
+    # so append `-fuse-ld=bfd` to override it for Linux targets.
+    link_flags = select({
+        "prelude//os/constraints:linux": ["-fuse-ld=bfd"],
+        "DEFAULT": [],
+    }),
     visibility = ["PUBLIC"],
 )
 
