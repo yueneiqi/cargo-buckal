@@ -256,93 +256,103 @@ pub fn init_platform_files(dest: &std::path::Path) -> Result<()> {
         writeln!(toolchains, ")")?;
     }
 
-    // Write platforms/BUCK appropriate for the host OS.
+    // Write platforms/BUCK with a Tier1-ish set of Rust triples.
     let mut platforms = std::fs::File::create(dest.join("platforms/BUCK"))?;
-    writeln!(
-        platforms,
-        "# Target platforms expressed using Rust-style triples."
-    )?;
+    writeln!(platforms, "# Target platforms expressed using Rust-style triples.")?;
     writeln!(
         platforms,
         "# These are intended for `--target-platforms` and to make `select()`s in"
     )?;
     writeln!(
         platforms,
-        "# buckal-generated rules match on OS/CPU constraints."
+        "# buckal-generated rules match on OS/CPU/ABI constraints."
     )?;
     writeln!(platforms)?;
 
-    match os {
-        "linux" => {
-            writeln!(platforms, "platform(")?;
-            writeln!(platforms, "    name = \"x86_64-unknown-linux-gnu\",")?;
-            writeln!(platforms, "    constraint_values = [")?;
-            writeln!(platforms, "        \"prelude//os/constraints:linux\",")?;
-            writeln!(platforms, "        \"prelude//cpu/constraints:x86_64\",")?;
-            writeln!(platforms, "        \"prelude//abi/constraints:gnu\",")?;
-            writeln!(platforms, "    ],")?;
-            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
-            writeln!(platforms, ")")?;
-            writeln!(platforms)?;
+    let mut write_platform = |name: &str, constraints: &[&str]| -> std::io::Result<()> {
+        writeln!(platforms, "platform(")?;
+        writeln!(platforms, "    name = \"{}\",", name)?;
+        writeln!(platforms, "    constraint_values = [")?;
+        for c in constraints {
+            writeln!(platforms, "        \"{}\",", c)?;
+        }
+        writeln!(platforms, "    ],")?;
+        writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+        writeln!(platforms, ")")?;
+        writeln!(platforms)?;
+        Ok(())
+    };
 
-            writeln!(platforms, "platform(")?;
-            writeln!(platforms, "    name = \"aarch64-unknown-linux-gnu\",")?;
-            writeln!(platforms, "    constraint_values = [")?;
-            writeln!(platforms, "        \"prelude//os/constraints:linux\",")?;
-            writeln!(platforms, "        \"prelude//cpu/constraints:arm64\",")?;
-            writeln!(platforms, "        \"prelude//abi/constraints:gnu\",")?;
-            writeln!(platforms, "    ],")?;
-            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
-            writeln!(platforms, ")")?;
-        }
-        "macos" => {
-            writeln!(platforms, "platform(")?;
-            writeln!(platforms, "    name = \"x86_64-apple-darwin\",")?;
-            writeln!(platforms, "    constraint_values = [")?;
-            writeln!(platforms, "        \"prelude//os/constraints:macos\",")?;
-            writeln!(platforms, "        \"prelude//cpu/constraints:x86_64\",")?;
-            writeln!(platforms, "    ],")?;
-            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
-            writeln!(platforms, ")")?;
-            writeln!(platforms)?;
+    // macOS
+    write_platform(
+        "aarch64-apple-darwin",
+        &[
+            "prelude//os/constraints:macos",
+            "prelude//cpu/constraints:arm64",
+        ],
+    )?;
 
-            writeln!(platforms, "platform(")?;
-            writeln!(platforms, "    name = \"aarch64-apple-darwin\",")?;
-            writeln!(platforms, "    constraint_values = [")?;
-            writeln!(platforms, "        \"prelude//os/constraints:macos\",")?;
-            writeln!(platforms, "        \"prelude//cpu/constraints:arm64\",")?;
-            writeln!(platforms, "    ],")?;
-            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
-            writeln!(platforms, ")")?;
-        }
-        "windows" => {
-            writeln!(platforms, "platform(")?;
-            writeln!(platforms, "    name = \"x86_64-pc-windows-msvc\",")?;
-            writeln!(platforms, "    constraint_values = [")?;
-            writeln!(platforms, "        \"prelude//os/constraints:windows\",")?;
-            writeln!(platforms, "        \"prelude//cpu/constraints:x86_64\",")?;
-            writeln!(platforms, "    ],")?;
-            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
-            writeln!(platforms, ")")?;
-            writeln!(platforms)?;
+    // Windows MSVC
+    write_platform(
+        "aarch64-pc-windows-msvc",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:arm64",
+            "prelude//abi/constraints:msvc",
+        ],
+    )?;
+    write_platform(
+        "x86_64-pc-windows-msvc",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:x86_64",
+            "prelude//abi/constraints:msvc",
+        ],
+    )?;
+    write_platform(
+        "i686-pc-windows-msvc",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:x86_32",
+            "prelude//abi/constraints:msvc",
+        ],
+    )?;
 
-            writeln!(platforms, "platform(")?;
-            writeln!(platforms, "    name = \"aarch64-pc-windows-msvc\",")?;
-            writeln!(platforms, "    constraint_values = [")?;
-            writeln!(platforms, "        \"prelude//os/constraints:windows\",")?;
-            writeln!(platforms, "        \"prelude//cpu/constraints:arm64\",")?;
-            writeln!(platforms, "    ],")?;
-            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
-            writeln!(platforms, ")")?;
-        }
-        _ => {
-            writeln!(
-                platforms,
-                "# Unsupported host OS `{}`; add platforms manually as needed.",
-                os
-            )?;
-        }
-    }
+    // Windows GNU (MinGW)
+    write_platform(
+        "x86_64-pc-windows-gnu",
+        &[
+            "prelude//os/constraints:windows",
+            "prelude//cpu/constraints:x86_64",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
+
+    // Linux GNU
+    write_platform(
+        "aarch64-unknown-linux-gnu",
+        &[
+            "prelude//os/constraints:linux",
+            "prelude//cpu/constraints:arm64",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
+    write_platform(
+        "x86_64-unknown-linux-gnu",
+        &[
+            "prelude//os/constraints:linux",
+            "prelude//cpu/constraints:x86_64",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
+    write_platform(
+        "i686-unknown-linux-gnu",
+        &[
+            "prelude//os/constraints:linux",
+            "prelude//cpu/constraints:x86_32",
+            "prelude//abi/constraints:gnu",
+        ],
+    )?;
 
     Ok(())
 }
