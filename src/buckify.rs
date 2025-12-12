@@ -327,7 +327,7 @@ fn resolve_dep_label(dep: &NodeDep, dep_package: &Package) -> Option<(String, Op
         // first-party dependency
         let buck2_root = get_buck2_root().ok()?;
         let manifest_path = PathBuf::from(&dep_package.manifest_path);
-        let manifest_dir = manifest_path.parent().unwrap();
+        let manifest_dir = manifest_path.parent().expect("manifest_path should always have a parent directory");
         let relative = manifest_dir.strip_prefix(&buck2_root).ok()?;
 
         let mut relative_path = relative.to_string_lossy().into_owned();
