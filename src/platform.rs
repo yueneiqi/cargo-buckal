@@ -5,6 +5,8 @@ use std::{
 use bitflags::bitflags;
 use cargo_platform::{Cfg, Platform};
 
+use crate::buckal_warn;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Os {
     Windows,
@@ -48,25 +50,67 @@ static SUPPORTED_TARGETS: &[(Os, &str)] = &[
 /// Cache of `rustc --print=cfg --target <triple>` output for supported triples.
 static CFG_CACHE: OnceLock<HashMap<&'static str, Vec<Cfg>>> = OnceLock::new();
 
+fn rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
+    match Command::new("rustc")
+        .args(["--print=cfg", "--target", triple])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let cfgs: Vec<Cfg> = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| Cfg::from_str(line).ok())
+                .collect();
+            Some(cfgs)
+        }
+        Ok(output) => {
+            buckal_warn!(
+                "Failed to run `rustc --print=cfg --target {}`: {}",
+                triple,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            None
+        }
+        Err(error) => {
+            buckal_warn!(
+                "Failed to execute `rustc --print=cfg --target {}`: {}",
+                triple,
+                error
+            );
+            None
+        }
+    }
+}
+
 fn cfg_cache() -> &'static HashMap<&'static str, Vec<Cfg>> {
-	    CFG_CACHE.get_or_init(|| {
-	        let mut map = HashMap::new();
-	        for (_, triple) in SUPPORTED_TARGETS {
-	            if let Ok(output) = Command::new("rustc")
-	                .args(["--print=cfg", "--target", triple])
-	                .output()
-	                && output.status.success()
-	            {
-	                let cfgs: Vec<Cfg> = String::from_utf8_lossy(&output.stdout)
-	                    .lines()
-	                    .filter_map(|line| Cfg::from_str(line).ok())
-	                    .collect();
-	                map.insert(*triple, cfgs);
-	            }
-	        }
-	        map
-	    })
-	}
+    CFG_CACHE.get_or_init(|| {
+        let results = std::thread::scope(|scope| {
+            let handles = SUPPORTED_TARGETS
+                .iter()
+                .map(|(_, triple)| {
+                    let triple = *triple;
+                    scope.spawn(move || (triple, rustc_cfgs_for_triple(triple)))
+                })
+                .collect::<Vec<_>>();
+
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .expect("cfg_cache thread panicked while running rustc")
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let mut map = HashMap::new();
+        for (triple, cfgs) in results {
+            if let Some(cfgs) = cfgs {
+                map.insert(triple, cfgs);
+            }
+        }
+        map
+    })
+}
 
 pub fn buck_labels(oses: &BTreeSet<Os>) -> BTreeSet<String> {
     oses.iter().map(|os| os.buck_label().to_string()).collect()

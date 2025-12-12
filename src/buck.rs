@@ -373,6 +373,33 @@ where
     dst.extend(to_add);
 }
 
+fn patch_deps_fields(
+    patch_fields: &Set<String>,
+    deps: &mut Set<String>,
+    os_deps: &mut Map<String, Set<String>>,
+    os_named_deps: &mut Map<String, Map<String, String>>,
+    other_deps: &Set<String>,
+    other_os_deps: &Map<String, Set<String>>,
+    other_os_named_deps: &Map<String, Map<String, String>>,
+) {
+    if patch_fields.contains("deps") {
+        patch_set(deps, other_deps);
+    }
+
+    if patch_fields.contains("os_deps") {
+        for (plat, deps) in other_os_deps {
+            patch_set(os_deps.entry(plat.clone()).or_default(), deps);
+        }
+    }
+
+    if patch_fields.contains("os_named_deps") {
+        for (alias, plat_map) in other_os_named_deps {
+            let entry = os_named_deps.entry(alias.clone()).or_default();
+            patch_map(entry, plat_map);
+        }
+    }
+}
+
 impl RustLibrary {
     fn from_py_dict(kwargs: &Bound<'_, PyDict>) -> PyResult<Self> {
         let name: String = get_arg(kwargs, "name");
@@ -446,22 +473,15 @@ impl RustLibrary {
             patch_set(&mut self.visibility, &other.visibility);
         }
 
-        if patch_fields.contains("deps") {
-            patch_set(&mut self.deps, &other.deps);
-        }
-
-        if patch_fields.contains("os_deps") {
-            for (plat, deps) in &other.os_deps {
-                patch_set(self.os_deps.entry(plat.clone()).or_default(), deps);
-            }
-        }
-
-        if patch_fields.contains("os_named_deps") {
-            for (alias, plat_map) in &other.os_named_deps {
-                let entry = self.os_named_deps.entry(alias.clone()).or_default();
-                patch_map(entry, plat_map);
-            }
-        }
+        patch_deps_fields(
+            patch_fields,
+            &mut self.deps,
+            &mut self.os_deps,
+            &mut self.os_named_deps,
+            &other.deps,
+            &other.os_deps,
+            &other.os_named_deps,
+        );
     }
 }
 
@@ -536,22 +556,15 @@ impl RustBinary {
             patch_set(&mut self.visibility, &other.visibility);
         }
 
-        if patch_fields.contains("deps") {
-            patch_set(&mut self.deps, &other.deps);
-        }
-
-        if patch_fields.contains("os_deps") {
-            for (plat, deps) in &other.os_deps {
-                patch_set(self.os_deps.entry(plat.clone()).or_default(), deps);
-            }
-        }
-
-        if patch_fields.contains("os_named_deps") {
-            for (alias, plat_map) in &other.os_named_deps {
-                let entry = self.os_named_deps.entry(alias.clone()).or_default();
-                patch_map(entry, plat_map);
-            }
-        }
+        patch_deps_fields(
+            patch_fields,
+            &mut self.deps,
+            &mut self.os_deps,
+            &mut self.os_named_deps,
+            &other.deps,
+            &other.os_deps,
+            &other.os_named_deps,
+        );
     }
 }
 
@@ -626,22 +639,15 @@ impl RustTest {
             patch_set(&mut self.visibility, &other.visibility);
         }
 
-        if patch_fields.contains("deps") {
-            patch_set(&mut self.deps, &other.deps);
-        }
-
-        if patch_fields.contains("os_deps") {
-            for (plat, deps) in &other.os_deps {
-                patch_set(self.os_deps.entry(plat.clone()).or_default(), deps);
-            }
-        }
-
-        if patch_fields.contains("os_named_deps") {
-            for (alias, plat_map) in &other.os_named_deps {
-                let entry = self.os_named_deps.entry(alias.clone()).or_default();
-                patch_map(entry, plat_map);
-            }
-        }
+        patch_deps_fields(
+            patch_fields,
+            &mut self.deps,
+            &mut self.os_deps,
+            &mut self.os_named_deps,
+            &other.deps,
+            &other.os_deps,
+            &other.os_named_deps,
+        );
     }
 }
 
