@@ -344,7 +344,8 @@ fn resolve_dep_label(dep: &NodeDep, dep_package: &Package) -> Option<(String, Op
         if !output.status.success() {
             panic!("{}", String::from_utf8_lossy(&output.stderr));
         }
-        let targets: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let targets: Vec<Value> = serde_json::from_slice(&output.stdout)
+            .expect("Failed to parse buck2 targets JSON output");
         let target_item = targets
             .iter()
             .find(|t| {
