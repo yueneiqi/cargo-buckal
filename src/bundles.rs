@@ -185,75 +185,100 @@ pub fn init_platform_files(dest: &std::path::Path) -> Result<()> {
     std::fs::create_dir_all(dest.join("platforms"))?;
 
     // Overwrite toolchains only on Linux to avoid lld demo toolchain issues.
+    // The generated file is OS-aware so a repo initialized on Linux can be
+    // reused on macOS/Windows without selecting Linux cross tools.
     if os == "linux" {
         let mut toolchains = std::fs::File::create(dest.join("toolchains/BUCK"))?;
-        writeln!(toolchains, "load(\"@prelude//toolchains:cxx.bzl\", \"system_cxx_toolchain\")")?;
-        writeln!(toolchains, "load(\"@prelude//toolchains:genrule.bzl\", \"system_genrule_toolchain\")")?;
-        writeln!(
-            toolchains,
-            "load(\n    \"@prelude//toolchains:python.bzl\",\n    \"system_python_bootstrap_toolchain\",\n    \"system_python_toolchain\",\n)"
-        )?;
-        writeln!(toolchains, "load(\"@prelude//toolchains:rust.bzl\", \"system_rust_toolchain\")")?;
-        writeln!(toolchains)?;
-        writeln!(
-            toolchains,
-            "# We override the demo toolchains so we can avoid forcing `-fuse-ld=lld`."
-        )?;
-        writeln!(
-            toolchains,
-            "# The bundled demo cxx toolchain uses clang++ and adds `-fuse-ld=lld` on Linux."
-        )?;
-        writeln!(
-            toolchains,
-            "# Using the system GCC/G++ tools keeps linker flags empty and fixes rust linking."
-        )?;
-        writeln!(toolchains, "system_cxx_toolchain(")?;
-        writeln!(toolchains, "    name = \"cxx\",")?;
-        writeln!(toolchains, "    compiler = select({{")?;
-        writeln!(
-            toolchains,
-            "        \"prelude//cpu/constraints:arm64\": \"aarch64-linux-gnu-gcc\","
-        )?;
-        writeln!(toolchains, "        \"DEFAULT\": \"gcc\",")?;
-        writeln!(toolchains, "    }}),")?;
-        writeln!(
-            toolchains,
-            "    # Keep `g++` as the C++ compiler even for arm64 so the prelude"
-        )?;
-        writeln!(
-            toolchains,
-            "    # doesn't inject `-fuse-ld=lld` (lld isn't available here)."
-        )?;
-        writeln!(toolchains, "    cxx_compiler = \"g++\",")?;
-        writeln!(toolchains, "    linker = select({{")?;
-        writeln!(
-            toolchains,
-            "        \"prelude//cpu/constraints:arm64\": \"aarch64-linux-gnu-g++\","
-        )?;
-        writeln!(toolchains, "        \"DEFAULT\": \"g++\",")?;
-        writeln!(toolchains, "    }}),")?;
-        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
-        writeln!(toolchains, ")")?;
-        writeln!(toolchains)?;
-        writeln!(toolchains, "system_rust_toolchain(")?;
-        writeln!(toolchains, "    name = \"rust\",")?;
-        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
-        writeln!(toolchains, ")")?;
-        writeln!(toolchains)?;
-        writeln!(toolchains, "system_python_bootstrap_toolchain(")?;
-        writeln!(toolchains, "    name = \"python_bootstrap\",")?;
-        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
-        writeln!(toolchains, ")")?;
-        writeln!(toolchains)?;
-        writeln!(toolchains, "system_python_toolchain(")?;
-        writeln!(toolchains, "    name = \"python\",")?;
-        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
-        writeln!(toolchains, ")")?;
-        writeln!(toolchains)?;
-        writeln!(toolchains, "system_genrule_toolchain(")?;
-        writeln!(toolchains, "    name = \"genrule\",")?;
-        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
-        writeln!(toolchains, ")")?;
+        let contents = r#"load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
+load(
+    "@prelude//toolchains:python.bzl",
+    "system_python_bootstrap_toolchain",
+    "system_python_toolchain",
+)
+load("@prelude//toolchains:rust.bzl", "system_rust_toolchain")
+
+# We override the demo toolchains so we can avoid forcing `-fuse-ld=lld`.
+# The bundled demo cxx toolchain uses clang++ and adds `-fuse-ld=lld` on Linux,
+# but some environments don't have lld installed. We also guard Linux cross
+# compiler selection by OS so this file works on macOS/Windows too.
+system_cxx_toolchain(
+    name = "cxx",
+    compiler = select({
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-gcc",
+            "DEFAULT": "gcc",
+        }),
+        "prelude//os/constraints:macos": "clang",
+        "prelude//os/constraints:windows": "cl",
+        "DEFAULT": "cc",
+    }),
+    # Keep `g++` as the C++ compiler on Linux so the prelude doesn't inject
+    # `-fuse-ld=lld` (lld isn't guaranteed to exist). Other OSes use their
+    # native compilers.
+    cxx_compiler = select({
+        "prelude//os/constraints:linux": "g++",
+        "prelude//os/constraints:macos": "clang++",
+        "prelude//os/constraints:windows": "cl",
+        "DEFAULT": "c++",
+    }),
+    linker = select({
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-g++",
+            "DEFAULT": "g++",
+        }),
+        "prelude//os/constraints:macos": "clang++",
+        "prelude//os/constraints:windows": "link",
+        "DEFAULT": "c++",
+    }),
+    visibility = ["PUBLIC"],
+)
+
+# Buck prelude only maps a small set of CPU constraints to Rust triples by
+# default. We provide an explicit mapping so `--target-platforms` works for
+# x86_32 (i686) and OS-specific triples.
+system_rust_toolchain(
+    name = "rust",
+    rustc_target_triple = select({
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-unknown-linux-gnu",
+            "prelude//cpu/constraints:x86_32": "i686-unknown-linux-gnu",
+            "DEFAULT": "x86_64-unknown-linux-gnu",
+        }),
+        "prelude//os/constraints:macos": select({
+            "prelude//cpu/constraints:arm64": "aarch64-apple-darwin",
+            "DEFAULT": "x86_64-apple-darwin",
+        }),
+        "prelude//os/constraints:windows": select({
+            "prelude//abi/constraints:gnu": "x86_64-pc-windows-gnu",
+            "prelude//abi/constraints:msvc": select({
+                "prelude//cpu/constraints:arm64": "aarch64-pc-windows-msvc",
+                "prelude//cpu/constraints:x86_32": "i686-pc-windows-msvc",
+                "DEFAULT": "x86_64-pc-windows-msvc",
+            }),
+            "DEFAULT": "x86_64-pc-windows-msvc",
+        }),
+        "DEFAULT": "x86_64-unknown-linux-gnu",
+    }),
+    visibility = ["PUBLIC"],
+)
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+system_python_toolchain(
+    name = "python",
+    visibility = ["PUBLIC"],
+)
+
+system_genrule_toolchain(
+    name = "genrule",
+    visibility = ["PUBLIC"],
+)
+"#;
+        toolchains.write_all(contents.as_bytes())?;
     }
 
     // Write platforms/BUCK with a Tier1-ish set of Rust triples.
