@@ -15,9 +15,11 @@ pub enum Os {
 impl Os {
     pub fn buck_label(self) -> &'static str {
         match self {
-            Os::Windows => "prelude//os:windows",
-            Os::Macos => "prelude//os:macos",
-            Os::Linux => "prelude//os:linux",
+            // Use canonical prelude constraint values so selects work with
+            // platform definitions like `prelude//os/constraints:linux`.
+            Os::Windows => "prelude//os/constraints:windows",
+            Os::Macos => "prelude//os/constraints:macos",
+            Os::Linux => "prelude//os/constraints:linux",
         }
     }
 
