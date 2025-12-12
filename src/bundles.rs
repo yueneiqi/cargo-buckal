@@ -170,6 +170,183 @@ pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Initialize platform-related skeleton files after `buck2 init`.
+///
+/// Buck2's demo toolchains on Linux inject `-fuse-ld=lld`, which breaks
+/// environments without lld and causes cross-arch linkers to default to host
+/// tools. We overwrite `toolchains/BUCK` on Linux with explicit system
+/// toolchains and write a minimal `platforms/BUCK` for common Rust triples on
+/// the host OS.
+pub fn init_platform_files(dest: &std::path::Path) -> Result<()> {
+    let os = std::env::consts::OS;
+
+    // Ensure directories exist.
+    std::fs::create_dir_all(dest.join("toolchains"))?;
+    std::fs::create_dir_all(dest.join("platforms"))?;
+
+    // Overwrite toolchains only on Linux to avoid lld demo toolchain issues.
+    if os == "linux" {
+        let mut toolchains = std::fs::File::create(dest.join("toolchains/BUCK"))?;
+        writeln!(toolchains, "load(\"@prelude//toolchains:cxx.bzl\", \"system_cxx_toolchain\")")?;
+        writeln!(toolchains, "load(\"@prelude//toolchains:genrule.bzl\", \"system_genrule_toolchain\")")?;
+        writeln!(
+            toolchains,
+            "load(\n    \"@prelude//toolchains:python.bzl\",\n    \"system_python_bootstrap_toolchain\",\n    \"system_python_toolchain\",\n)"
+        )?;
+        writeln!(toolchains, "load(\"@prelude//toolchains:rust.bzl\", \"system_rust_toolchain\")")?;
+        writeln!(toolchains)?;
+        writeln!(
+            toolchains,
+            "# We override the demo toolchains so we can avoid forcing `-fuse-ld=lld`."
+        )?;
+        writeln!(
+            toolchains,
+            "# The bundled demo cxx toolchain uses clang++ and adds `-fuse-ld=lld` on Linux."
+        )?;
+        writeln!(
+            toolchains,
+            "# Using the system GCC/G++ tools keeps linker flags empty and fixes rust linking."
+        )?;
+        writeln!(toolchains, "system_cxx_toolchain(")?;
+        writeln!(toolchains, "    name = \"cxx\",")?;
+        writeln!(toolchains, "    compiler = select({{")?;
+        writeln!(
+            toolchains,
+            "        \"prelude//cpu/constraints:arm64\": \"aarch64-linux-gnu-gcc\","
+        )?;
+        writeln!(toolchains, "        \"DEFAULT\": \"gcc\",")?;
+        writeln!(toolchains, "    }}),")?;
+        writeln!(
+            toolchains,
+            "    # Keep `g++` as the C++ compiler even for arm64 so the prelude"
+        )?;
+        writeln!(
+            toolchains,
+            "    # doesn't inject `-fuse-ld=lld` (lld isn't available here)."
+        )?;
+        writeln!(toolchains, "    cxx_compiler = \"g++\",")?;
+        writeln!(toolchains, "    linker = select({{")?;
+        writeln!(
+            toolchains,
+            "        \"prelude//cpu/constraints:arm64\": \"aarch64-linux-gnu-g++\","
+        )?;
+        writeln!(toolchains, "        \"DEFAULT\": \"g++\",")?;
+        writeln!(toolchains, "    }}),")?;
+        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
+        writeln!(toolchains, ")")?;
+        writeln!(toolchains)?;
+        writeln!(toolchains, "system_rust_toolchain(")?;
+        writeln!(toolchains, "    name = \"rust\",")?;
+        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
+        writeln!(toolchains, ")")?;
+        writeln!(toolchains)?;
+        writeln!(toolchains, "system_python_bootstrap_toolchain(")?;
+        writeln!(toolchains, "    name = \"python_bootstrap\",")?;
+        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
+        writeln!(toolchains, ")")?;
+        writeln!(toolchains)?;
+        writeln!(toolchains, "system_python_toolchain(")?;
+        writeln!(toolchains, "    name = \"python\",")?;
+        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
+        writeln!(toolchains, ")")?;
+        writeln!(toolchains)?;
+        writeln!(toolchains, "system_genrule_toolchain(")?;
+        writeln!(toolchains, "    name = \"genrule\",")?;
+        writeln!(toolchains, "    visibility = [\"PUBLIC\"],")?;
+        writeln!(toolchains, ")")?;
+    }
+
+    // Write platforms/BUCK appropriate for the host OS.
+    let mut platforms = std::fs::File::create(dest.join("platforms/BUCK"))?;
+    writeln!(
+        platforms,
+        "# Target platforms expressed using Rust-style triples."
+    )?;
+    writeln!(
+        platforms,
+        "# These are intended for `--target-platforms` and to make `select()`s in"
+    )?;
+    writeln!(
+        platforms,
+        "# buckal-generated rules match on OS/CPU constraints."
+    )?;
+    writeln!(platforms)?;
+
+    match os {
+        "linux" => {
+            writeln!(platforms, "platform(")?;
+            writeln!(platforms, "    name = \"x86_64-unknown-linux-gnu\",")?;
+            writeln!(platforms, "    constraint_values = [")?;
+            writeln!(platforms, "        \"prelude//os/constraints:linux\",")?;
+            writeln!(platforms, "        \"prelude//cpu/constraints:x86_64\",")?;
+            writeln!(platforms, "        \"prelude//abi/constraints:gnu\",")?;
+            writeln!(platforms, "    ],")?;
+            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+            writeln!(platforms, ")")?;
+            writeln!(platforms)?;
+
+            writeln!(platforms, "platform(")?;
+            writeln!(platforms, "    name = \"aarch64-unknown-linux-gnu\",")?;
+            writeln!(platforms, "    constraint_values = [")?;
+            writeln!(platforms, "        \"prelude//os/constraints:linux\",")?;
+            writeln!(platforms, "        \"prelude//cpu/constraints:arm64\",")?;
+            writeln!(platforms, "        \"prelude//abi/constraints:gnu\",")?;
+            writeln!(platforms, "    ],")?;
+            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+            writeln!(platforms, ")")?;
+        }
+        "macos" => {
+            writeln!(platforms, "platform(")?;
+            writeln!(platforms, "    name = \"x86_64-apple-darwin\",")?;
+            writeln!(platforms, "    constraint_values = [")?;
+            writeln!(platforms, "        \"prelude//os/constraints:macos\",")?;
+            writeln!(platforms, "        \"prelude//cpu/constraints:x86_64\",")?;
+            writeln!(platforms, "    ],")?;
+            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+            writeln!(platforms, ")")?;
+            writeln!(platforms)?;
+
+            writeln!(platforms, "platform(")?;
+            writeln!(platforms, "    name = \"aarch64-apple-darwin\",")?;
+            writeln!(platforms, "    constraint_values = [")?;
+            writeln!(platforms, "        \"prelude//os/constraints:macos\",")?;
+            writeln!(platforms, "        \"prelude//cpu/constraints:arm64\",")?;
+            writeln!(platforms, "    ],")?;
+            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+            writeln!(platforms, ")")?;
+        }
+        "windows" => {
+            writeln!(platforms, "platform(")?;
+            writeln!(platforms, "    name = \"x86_64-pc-windows-msvc\",")?;
+            writeln!(platforms, "    constraint_values = [")?;
+            writeln!(platforms, "        \"prelude//os/constraints:windows\",")?;
+            writeln!(platforms, "        \"prelude//cpu/constraints:x86_64\",")?;
+            writeln!(platforms, "    ],")?;
+            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+            writeln!(platforms, ")")?;
+            writeln!(platforms)?;
+
+            writeln!(platforms, "platform(")?;
+            writeln!(platforms, "    name = \"aarch64-pc-windows-msvc\",")?;
+            writeln!(platforms, "    constraint_values = [")?;
+            writeln!(platforms, "        \"prelude//os/constraints:windows\",")?;
+            writeln!(platforms, "        \"prelude//cpu/constraints:arm64\",")?;
+            writeln!(platforms, "    ],")?;
+            writeln!(platforms, "    visibility = [\"PUBLIC\"],")?;
+            writeln!(platforms, ")")?;
+        }
+        _ => {
+            writeln!(
+                platforms,
+                "# Unsupported host OS `{}`; add platforms manually as needed.",
+                os
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn fetch_buckal_cell(dest: &std::path::Path) -> Result<()> {
     let mut buckconfig = BuckConfig::load(&dest.join(".buckconfig"))?;
     let buckal_section = buckconfig.get_section_mut("external_cell_buckal");
