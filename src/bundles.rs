@@ -207,6 +207,7 @@ system_cxx_toolchain(
     compiler = select({
         "prelude//os/constraints:linux": select({
             "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-gcc",
+            "prelude//cpu/constraints:x86_32": "i686-linux-gnu-gcc",
             "DEFAULT": "gcc",
         }),
         "prelude//os/constraints:macos": "clang",
@@ -217,7 +218,11 @@ system_cxx_toolchain(
     # `-fuse-ld=lld` (lld isn't guaranteed to exist). Other OSes use their
     # native compilers.
     cxx_compiler = select({
-        "prelude//os/constraints:linux": "g++",
+        "prelude//os/constraints:linux": select({
+            "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-g++",
+            "prelude//cpu/constraints:x86_32": "i686-linux-gnu-g++",
+            "DEFAULT": "g++",
+        }),
         "prelude//os/constraints:macos": "clang++",
         "prelude//os/constraints:windows": "cl",
         "DEFAULT": "c++",
@@ -225,6 +230,7 @@ system_cxx_toolchain(
     linker = select({
         "prelude//os/constraints:linux": select({
             "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-g++",
+            "prelude//cpu/constraints:x86_32": "i686-linux-gnu-g++",
             "DEFAULT": "g++",
         }),
         "prelude//os/constraints:macos": "clang++",
