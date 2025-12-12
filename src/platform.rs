@@ -49,25 +49,24 @@ static SUPPORTED_TARGETS: &[(Os, &str)] = &[
 static CFG_CACHE: OnceLock<HashMap<&'static str, Vec<Cfg>>> = OnceLock::new();
 
 fn cfg_cache() -> &'static HashMap<&'static str, Vec<Cfg>> {
-    CFG_CACHE.get_or_init(|| {
-        let mut map = HashMap::new();
-        for (_, triple) in SUPPORTED_TARGETS {
-            if let Ok(output) = Command::new("rustc")
-                .args(["--print=cfg", "--target", triple])
-                .output()
-            {
-                if output.status.success() {
-                    let cfgs: Vec<Cfg> = String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .filter_map(|line| Cfg::from_str(line).ok())
-                        .collect();
-                    map.insert(*triple, cfgs);
-                }
-            }
-        }
-        map
-    })
-}
+	    CFG_CACHE.get_or_init(|| {
+	        let mut map = HashMap::new();
+	        for (_, triple) in SUPPORTED_TARGETS {
+	            if let Ok(output) = Command::new("rustc")
+	                .args(["--print=cfg", "--target", triple])
+	                .output()
+	                && output.status.success()
+	            {
+	                let cfgs: Vec<Cfg> = String::from_utf8_lossy(&output.stdout)
+	                    .lines()
+	                    .filter_map(|line| Cfg::from_str(line).ok())
+	                    .collect();
+	                map.insert(*triple, cfgs);
+	            }
+	        }
+	        map
+	    })
+	}
 
 pub fn buck_labels(oses: &BTreeSet<Os>) -> BTreeSet<String> {
     oses.iter().map(|os| os.buck_label().to_string()).collect()

@@ -424,17 +424,16 @@ fn set_deps(
         let matching_platforms: Vec<Option<std::collections::BTreeSet<Os>>> = dep
             .dep_kinds
             .iter()
-            .filter(|dk| dep_kind_matches(kind, dk.kind))
-            .map(|dk| {
-                dk.target
-                    .as_ref()
-                    .map(|platform| {
-                        let oses = oses_from_platform(platform);
-                        if oses.is_empty() { None } else { Some(oses) }
-                    })
-                    .flatten()
-            })
-            .collect();
+	            .filter(|dk| dep_kind_matches(kind, dk.kind))
+	            .map(|dk| {
+	                dk.target
+	                    .as_ref()
+	                    .and_then(|platform| {
+	                        let oses = oses_from_platform(platform);
+	                        if oses.is_empty() { None } else { Some(oses) }
+	                    })
+	            })
+	            .collect();
 
         if matching_platforms.is_empty() {
             continue;
