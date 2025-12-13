@@ -143,9 +143,9 @@ pub fn init_modifier(dest: &std::path::Path) -> Result<()> {
 pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
     let mut buckconfig = BuckConfig::load(&dest.join(".buckconfig"))?;
     let cells = buckconfig.get_section_mut("cells");
-    cells.push("  buckal = buckal".to_owned());
+    upsert_kv_line(cells, "buckal", "buckal");
     let external_cells = buckconfig.get_section_mut("external_cells");
-    external_cells.push("  buckal = git".to_owned());
+    upsert_kv_line(external_cells, "buckal", "git");
     let buckal_section =
         buckconfig.new_section_after("external_cells", "external_cell_buckal".to_owned());
     buckal_section.push(format!(
@@ -170,26 +170,36 @@ pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+fn upsert_kv_line(lines: &mut Lines, key: &str, value: &str) {
+    let prefix = format!("{key} =");
+    let replacement = format!("  {key} = {value}");
+    if let Some(pos) = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with(&prefix))
+    {
+        lines[pos] = replacement;
+    } else {
+        lines.push(replacement);
+    }
+}
+
 /// Initialize platform-related skeleton files after `buck2 init`.
 ///
-/// Buck2's demo toolchains on Linux inject `-fuse-ld=lld`, which breaks
-/// environments without lld and causes cross-arch linkers to default to host
-/// tools. We overwrite `toolchains/BUCK` on Linux with explicit system
-/// toolchains and write a minimal `platforms/BUCK` for common Rust triples on
-/// the host OS.
+/// Write a minimal `platforms/BUCK` for common Rust triples so users can pass
+/// `--target-platforms` without additional setup.
+///
+/// We also generate an OS-aware `toolchains/BUCK` to avoid demo toolchain issues
+/// and to support Windows builds without requiring manual edits.
 pub fn init_platform_files(dest: &std::path::Path) -> Result<()> {
-    let os = std::env::consts::OS;
-
-    // Ensure directories exist.
     std::fs::create_dir_all(dest.join("toolchains"))?;
     std::fs::create_dir_all(dest.join("platforms"))?;
 
-    // Overwrite toolchains only on Linux to avoid lld demo toolchain issues.
-    // The generated file is OS-aware so a repo initialized on Linux can be
-    // reused on macOS/Windows without selecting Linux cross tools.
-    if os == "linux" {
-        let mut toolchains = std::fs::File::create(dest.join("toolchains/BUCK"))?;
-        let contents = r#"load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+    // Write toolchains/BUCK with OS-aware system toolchains.
+    //
+    // This avoids the demo toolchains' Linux `-fuse-ld=lld` default (lld isn't
+    // guaranteed to exist) and configures a Windows-friendly linker wrapper to
+    // avoid MSVC link.exe's nested response file limitation.
+    let toolchains_buck = r#"load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
 load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
 load(
     "@prelude//toolchains:python.bzl",
@@ -211,7 +221,10 @@ system_cxx_toolchain(
             "DEFAULT": "gcc",
         }),
         "prelude//os/constraints:macos": "clang",
-        "prelude//os/constraints:windows": "cl",
+        "prelude//os/constraints:windows": select({
+            "prelude//abi/constraints:gnu": "gcc",
+            "DEFAULT": "cl",
+        }),
         "DEFAULT": "cc",
     }),
     # Keep `g++` as the C++ compiler on Linux so the prelude doesn't inject
@@ -224,7 +237,10 @@ system_cxx_toolchain(
             "DEFAULT": "g++",
         }),
         "prelude//os/constraints:macos": "clang++",
-        "prelude//os/constraints:windows": "cl",
+        "prelude//os/constraints:windows": select({
+            "prelude//abi/constraints:gnu": "g++",
+            "DEFAULT": "cl",
+        }),
         "DEFAULT": "c++",
     }),
     linker = select({
@@ -234,7 +250,19 @@ system_cxx_toolchain(
             "DEFAULT": "g++",
         }),
         "prelude//os/constraints:macos": "clang++",
-        "prelude//os/constraints:windows": "link",
+        "prelude//os/constraints:windows": select({
+            # Use Rust's bundled lld-link instead of MSVC link.exe to avoid
+            # link.exe's nested response file limitation (common with Rust + Buck).
+            "prelude//abi/constraints:msvc": select({
+                "prelude//cpu/constraints:arm64": "toolchains/lld-link-aarch64.bat",
+                "prelude//cpu/constraints:x86_32": "toolchains/lld-link-i686.bat",
+                "prelude//cpu/constraints:x86_64": "toolchains/lld-link-x86_64.bat",
+                "DEFAULT": "toolchains/lld-link.bat",
+            }),
+            # GNU targets must use a GNU-like driver; lld-link uses MSVC flag syntax.
+            "prelude//abi/constraints:gnu": "toolchains/g++-x86_64-gnu-sysroot.bat",
+            "DEFAULT": "toolchains/lld-link.bat",
+        }),
         "DEFAULT": "c++",
     }),
     # Buck prelude's system C++ toolchain injects `-fuse-ld=lld` into the
@@ -291,8 +319,195 @@ system_genrule_toolchain(
     visibility = ["PUBLIC"],
 )
 "#;
-        toolchains.write_all(contents.as_bytes())?;
-    }
+    std::fs::write(dest.join("toolchains/BUCK"), toolchains_buck)?;
+
+    // Windows helper scripts referenced by toolchains/BUCK (safe to vendor on all OSes).
+    std::fs::write(
+        dest.join("toolchains/lld-link.bat"),
+        r#"@echo off
+setlocal EnableExtensions
+
+rem Resolve Rust sysroot and host triple, then invoke the bundled lld-link.exe.
+
+for /f "delims=" %%I in ('rustc --print sysroot') do set "SYSROOT=%%I"
+
+set "HOST_TRIPLE="
+for /f "tokens=1,* delims=:" %%A in ('rustc -vV ^| findstr /b "host:"') do (
+  set "HOST_TRIPLE=%%B"
+)
+set "HOST_TRIPLE=%HOST_TRIPLE: =%"
+
+if "%HOST_TRIPLE%"=="" (
+  echo lld-link.bat: failed to determine Rust host triple via "rustc -vV" 1>&2
+  exit /b 1
+)
+
+set "LLD_LINK=%SYSROOT%\\lib\\rustlib\\%HOST_TRIPLE%\\bin\\gcc-ld\\lld-link.exe"
+if exist "%LLD_LINK%" goto :run
+
+set "LLD_LINK=%SYSROOT%\\bin\\rust-lld.exe"
+if exist "%LLD_LINK%" goto :run
+
+echo lld-link.bat: lld-link executable not found under "%SYSROOT%" 1>&2
+exit /b 1
+
+:run
+"%LLD_LINK%" %*
+exit /b %errorlevel%
+"#,
+    )?;
+    std::fs::write(
+        dest.join("toolchains/lld-link-x86_64.bat"),
+        r#"@echo off
+setlocal EnableExtensions
+
+rem Resolve Rust sysroot and host triple, then invoke the bundled lld-link.exe.
+rem Adds /machine:X64 unless the caller already specified a machine.
+
+for /f "delims=" %%I in ('rustc --print sysroot') do set "SYSROOT=%%I"
+
+set "HOST_TRIPLE="
+for /f "tokens=1,* delims=:" %%A in ('rustc -vV ^| findstr /b "host:"') do (
+  set "HOST_TRIPLE=%%B"
+)
+set "HOST_TRIPLE=%HOST_TRIPLE: =%"
+
+if "%HOST_TRIPLE%"=="" (
+  echo lld-link-x86_64.bat: failed to determine Rust host triple via "rustc -vV" 1>&2
+  exit /b 1
+)
+
+set "LLD_LINK=%SYSROOT%\\lib\\rustlib\\%HOST_TRIPLE%\\bin\\gcc-ld\\lld-link.exe"
+if exist "%LLD_LINK%" goto :maybe_add_machine
+
+set "LLD_LINK=%SYSROOT%\\bin\\rust-lld.exe"
+if exist "%LLD_LINK%" goto :maybe_add_machine
+
+echo lld-link-x86_64.bat: lld-link executable not found under "%SYSROOT%" 1>&2
+exit /b 1
+
+:maybe_add_machine
+set "ADD_MACHINE=1"
+for %%A in (%*) do (
+  echo %%~A | findstr /I /B "/machine:" "-machine:" >nul && set "ADD_MACHINE=0"
+)
+
+if "%ADD_MACHINE%"=="1" (
+  "%LLD_LINK%" /machine:X64 %*
+) else (
+  "%LLD_LINK%" %*
+)
+exit /b %errorlevel%
+"#,
+    )?;
+    std::fs::write(
+        dest.join("toolchains/lld-link-i686.bat"),
+        r#"@echo off
+setlocal EnableExtensions
+
+rem Resolve Rust sysroot and host triple, then invoke the bundled lld-link.exe.
+rem Adds /machine:X86 unless the caller already specified a machine.
+
+for /f "delims=" %%I in ('rustc --print sysroot') do set "SYSROOT=%%I"
+
+set "HOST_TRIPLE="
+for /f "tokens=1,* delims=:" %%A in ('rustc -vV ^| findstr /b "host:"') do (
+  set "HOST_TRIPLE=%%B"
+)
+set "HOST_TRIPLE=%HOST_TRIPLE: =%"
+
+if "%HOST_TRIPLE%"=="" (
+  echo lld-link-i686.bat: failed to determine Rust host triple via "rustc -vV" 1>&2
+  exit /b 1
+)
+
+set "LLD_LINK=%SYSROOT%\\lib\\rustlib\\%HOST_TRIPLE%\\bin\\gcc-ld\\lld-link.exe"
+if exist "%LLD_LINK%" goto :maybe_add_machine
+
+set "LLD_LINK=%SYSROOT%\\bin\\rust-lld.exe"
+if exist "%LLD_LINK%" goto :maybe_add_machine
+
+echo lld-link-i686.bat: lld-link executable not found under "%SYSROOT%" 1>&2
+exit /b 1
+
+:maybe_add_machine
+set "ADD_MACHINE=1"
+for %%A in (%*) do (
+  echo %%~A | findstr /I /B "/machine:" "-machine:" >nul && set "ADD_MACHINE=0"
+)
+
+if "%ADD_MACHINE%"=="1" (
+  "%LLD_LINK%" /machine:X86 %*
+) else (
+  "%LLD_LINK%" %*
+)
+exit /b %errorlevel%
+"#,
+    )?;
+    std::fs::write(
+        dest.join("toolchains/lld-link-aarch64.bat"),
+        r#"@echo off
+setlocal EnableExtensions
+
+rem Resolve Rust sysroot and host triple, then invoke the bundled lld-link.exe.
+rem Adds /machine:ARM64 unless the caller already specified a machine.
+
+for /f "delims=" %%I in ('rustc --print sysroot') do set "SYSROOT=%%I"
+
+set "HOST_TRIPLE="
+for /f "tokens=1,* delims=:" %%A in ('rustc -vV ^| findstr /b "host:"') do (
+  set "HOST_TRIPLE=%%B"
+)
+set "HOST_TRIPLE=%HOST_TRIPLE: =%"
+
+if "%HOST_TRIPLE%"=="" (
+  echo lld-link-aarch64.bat: failed to determine Rust host triple via "rustc -vV" 1>&2
+  exit /b 1
+)
+
+set "LLD_LINK=%SYSROOT%\\lib\\rustlib\\%HOST_TRIPLE%\\bin\\gcc-ld\\lld-link.exe"
+if exist "%LLD_LINK%" goto :maybe_add_machine
+
+set "LLD_LINK=%SYSROOT%\\bin\\rust-lld.exe"
+if exist "%LLD_LINK%" goto :maybe_add_machine
+
+echo lld-link-aarch64.bat: lld-link executable not found under "%SYSROOT%" 1>&2
+exit /b 1
+
+:maybe_add_machine
+set "ADD_MACHINE=1"
+for %%A in (%*) do (
+  echo %%~A | findstr /I /B "/machine:" "-machine:" >nul && set "ADD_MACHINE=0"
+)
+
+if "%ADD_MACHINE%"=="1" (
+  "%LLD_LINK%" /machine:ARM64 %*
+) else (
+  "%LLD_LINK%" %*
+)
+exit /b %errorlevel%
+"#,
+    )?;
+    std::fs::write(
+        dest.join("toolchains/g++-x86_64-gnu-sysroot.bat"),
+        r#"@echo off
+setlocal EnableExtensions
+
+rem Add Rust's GNU sysroot "self-contained" libs to the search path.
+rem This provides libgcc_eh.a (and friends) even when the system MinGW is incomplete.
+
+for /f "delims=" %%I in ('rustc +stable-x86_64-pc-windows-gnu --print sysroot') do set "SYSROOT=%%I"
+
+set "SELF_CONTAINED=%SYSROOT%\\lib\\rustlib\\x86_64-pc-windows-gnu\\lib\\self-contained"
+if not exist "%SELF_CONTAINED%" (
+  echo g++-gnu-sysroot.bat: self-contained dir not found: "%SELF_CONTAINED%" 1>&2
+  exit /b 1
+)
+
+g++ -L"%SELF_CONTAINED%" %*
+exit /b %errorlevel%
+"#,
+    )?;
 
     // Write platforms/BUCK with a Tier1-ish set of Rust triples.
     let mut platforms = std::fs::File::create(dest.join("platforms/BUCK"))?;
