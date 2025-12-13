@@ -1026,8 +1026,176 @@ pub fn flush_root(ctx: &BuckalContext) {
     let buck_rules = buckify_root_node(root_node, ctx);
 
     // Generate the BUCK file
-    let buck_content = gen_buck_content(&buck_rules);
+    let mut buck_content = gen_buck_content(&buck_rules);
+    buck_content = patch_root_windows_rustc_flags(buck_content, ctx);
     std::fs::write(&buck_path, buck_content).expect("Failed to write BUCK file");
+}
+
+#[derive(Default)]
+struct WindowsImportLibFlags {
+    gnu: Vec<String>,
+    msvc_x86_64: Vec<String>,
+    msvc_i686: Vec<String>,
+    msvc_aarch64: Vec<String>,
+}
+
+fn patch_root_windows_rustc_flags(mut buck_content: String, ctx: &BuckalContext) -> String {
+    let bin_names: Vec<String> = ctx
+        .root
+        .targets
+        .iter()
+        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Bin))
+        .map(|t| t.name.clone())
+        .collect();
+
+    if bin_names.is_empty() {
+        return buck_content;
+    }
+
+    let flags = windows_import_lib_flags(ctx);
+    let select_expr = render_windows_rustc_flags_select(&flags);
+    if select_expr.is_empty() {
+        return buck_content;
+    }
+
+    for bin_name in bin_names {
+        buck_content = patch_rust_binary_rustc_flags(&buck_content, &bin_name, &select_expr);
+    }
+
+    buck_content
+}
+
+fn windows_import_lib_flags(ctx: &BuckalContext) -> WindowsImportLibFlags {
+    let mut flags = WindowsImportLibFlags::default();
+
+    let add_all = |name: &str, out: &mut Vec<String>| {
+        let mut matches: Vec<_> = ctx
+            .packages_map
+            .values()
+            .filter(|p| p.name.to_string() == name)
+            .collect();
+        matches.sort_by(|a, b| a.version.cmp(&b.version));
+        for package in matches {
+            let package_name = package.name.to_string();
+            out.push(format!(
+                "@$(location //{}/{}/{}:{}-build-script-run[rustc_flags])",
+                RUST_CRATES_ROOT, package_name, package.version, package_name
+            ));
+        }
+    };
+
+    // GNU targets.
+    add_all("windows_x86_64_gnu", &mut flags.gnu);
+    add_all(
+        "winapi-x86_64-pc-windows-gnu",
+        &mut flags.gnu,
+    );
+
+    // MSVC targets (per CPU).
+    add_all("windows_x86_64_msvc", &mut flags.msvc_x86_64);
+    add_all("windows_i686_msvc", &mut flags.msvc_i686);
+    add_all("windows_aarch64_msvc", &mut flags.msvc_aarch64);
+
+    flags
+}
+
+fn render_windows_rustc_flags_select(flags: &WindowsImportLibFlags) -> String {
+    if flags.gnu.is_empty()
+        && flags.msvc_x86_64.is_empty()
+        && flags.msvc_i686.is_empty()
+        && flags.msvc_aarch64.is_empty()
+    {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    out.push_str("select({\n");
+    out.push_str("        \"prelude//os/constraints:windows\": select({\n");
+
+    // GNU branch.
+    out.push_str("            \"prelude//abi/constraints:gnu\": [\n");
+    for f in &flags.gnu {
+        out.push_str(&format!("                \"{}\",\n", f));
+    }
+    out.push_str("            ],\n");
+
+    // MSVC branch (cpu-specific).
+    out.push_str("            \"prelude//abi/constraints:msvc\": select({\n");
+    out.push_str("                \"prelude//cpu/constraints:arm64\": [\n");
+    for f in &flags.msvc_aarch64 {
+        out.push_str(&format!("                    \"{}\",\n", f));
+    }
+    out.push_str("                ],\n");
+    out.push_str("                \"prelude//cpu/constraints:x86_32\": [\n");
+    for f in &flags.msvc_i686 {
+        out.push_str(&format!("                    \"{}\",\n", f));
+    }
+    out.push_str("                ],\n");
+    out.push_str("                \"DEFAULT\": [\n");
+    for f in &flags.msvc_x86_64 {
+        out.push_str(&format!("                    \"{}\",\n", f));
+    }
+    out.push_str("                ],\n");
+    out.push_str("            }),\n");
+
+    // Default branch (when ABI constraint is missing).
+    out.push_str("            \"DEFAULT\": select({\n");
+    out.push_str("                \"prelude//cpu/constraints:arm64\": [\n");
+    for f in &flags.msvc_aarch64 {
+        out.push_str(&format!("                    \"{}\",\n", f));
+    }
+    out.push_str("                ],\n");
+    out.push_str("                \"prelude//cpu/constraints:x86_32\": [\n");
+    for f in &flags.msvc_i686 {
+        out.push_str(&format!("                    \"{}\",\n", f));
+    }
+    out.push_str("                ],\n");
+    out.push_str("                \"DEFAULT\": [\n");
+    for f in &flags.msvc_x86_64 {
+        out.push_str(&format!("                    \"{}\",\n", f));
+    }
+    out.push_str("                ],\n");
+    out.push_str("            }),\n");
+
+    out.push_str("        }),\n");
+    out.push_str("        \"DEFAULT\": [],\n");
+    out.push_str("    })");
+
+    out
+}
+
+fn patch_rust_binary_rustc_flags(buck_content: &str, bin_name: &str, select_expr: &str) -> String {
+    let name_marker = format!("    name = \"{bin_name}\",");
+    let Some(name_pos) = buck_content.find(&name_marker) else {
+        return buck_content.to_owned();
+    };
+
+    let Some(block_start) = buck_content[..name_pos].rfind("rust_binary(\n") else {
+        return buck_content.to_owned();
+    };
+
+    let Some(rustc_flags_pos) = buck_content[name_pos..].find("    rustc_flags = [") else {
+        return buck_content.to_owned();
+    };
+    let rustc_flags_pos = name_pos + rustc_flags_pos;
+
+    let after_rustc_flags = rustc_flags_pos + "    rustc_flags = [".len();
+    let Some(list_end_rel) = buck_content[after_rustc_flags..].find("\n    ],\n") else {
+        return buck_content.to_owned();
+    };
+    let list_end = after_rustc_flags + list_end_rel + "\n    ]".len();
+
+    // Ensure we're patching the rust_binary block that actually belongs to this target.
+    if block_start > rustc_flags_pos {
+        return buck_content.to_owned();
+    }
+
+    let mut out = String::with_capacity(buck_content.len() + select_expr.len() + 64);
+    out.push_str(&buck_content[..list_end]);
+    out.push_str(" + ");
+    out.push_str(select_expr);
+    out.push_str(&buck_content[list_end..]);
+    out
 }
 
 pub fn generate_third_party_aliases(ctx: &BuckalContext) {
