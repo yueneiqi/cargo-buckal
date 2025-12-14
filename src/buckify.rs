@@ -604,6 +604,8 @@ fn emit_rust_library(
             .to_owned()
             .strip_prefix(manifest_dir)
             .expect("Failed to get library source path")
+            .as_str()
+            .replace('\\', "/")
     );
 
     // look up platform compatibility
@@ -654,6 +656,8 @@ fn emit_rust_binary(
             .to_owned()
             .strip_prefix(manifest_dir)
             .expect("Failed to get binary source path")
+            .as_str()
+            .replace('\\', "/")
     );
 
     // Set dependencies
@@ -703,6 +707,8 @@ fn emit_rust_test(
             .to_owned()
             .strip_prefix(manifest_dir)
             .expect("Failed to get binary source path")
+            .as_str()
+            .replace('\\', "/")
     );
 
     // Set dependencies
@@ -751,6 +757,8 @@ fn emit_buildscript_build(
             .to_owned()
             .strip_prefix(manifest_dir)
             .expect("Failed to get library source path")
+            .as_str()
+            .replace('\\', "/")
     );
 
     // Set dependencies for the build script
