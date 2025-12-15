@@ -60,6 +60,7 @@ pub fn buckify_dep_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
         lib_target,
         &manifest_dir,
         &package.name,
+        ctx,
     );
 
     buck_rules.push(Rule::RustLibrary(rust_library));
@@ -85,6 +86,7 @@ pub fn buckify_dep_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
             node,
             &ctx.packages_map,
             &manifest_dir,
+            ctx,
         );
         buck_rules.push(Rule::RustBinary(buildscript_build));
 
@@ -146,6 +148,7 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
             bin_target,
             &manifest_dir,
             &buckal_name,
+            ctx,
         );
 
         if lib_targets.iter().any(|l| l.name == bin_target.name) {
@@ -173,6 +176,7 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
             lib_target,
             &manifest_dir,
             &buckal_name,
+            ctx,
         );
 
         buck_rules.push(Rule::RustLibrary(rust_library));
@@ -188,6 +192,7 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
                 lib_target,
                 &manifest_dir,
                 &buckal_name,
+                ctx,
             );
 
             buck_rules.push(Rule::RustTest(rust_test));
@@ -206,6 +211,7 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
                 test_target,
                 &manifest_dir,
                 &buckal_name,
+                ctx,
             );
 
             let package_name = package.name.replace("-", "_");
@@ -250,6 +256,7 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
             node,
             &ctx.packages_map,
             &manifest_dir,
+            ctx,
         );
         buck_rules.push(Rule::RustBinary(buildscript_build));
 
@@ -494,6 +501,7 @@ fn set_deps(
     node: &Node,
     packages_map: &HashMap<PackageId, Package>,
     kind: CargoTargetKind,
+    ctx: &BuckalContext,
 ) {
     for dep in &node.deps {
         let Some(dep_package) = packages_map.get(&dep.pkg) else {
@@ -514,10 +522,16 @@ fn set_deps(
                 Some(platform) => {
                     let oses = oses_from_platform(platform);
                     if oses.is_empty() {
-                        dropped_due_to_unsupported = true;
-                        continue;
+                        // Only drop unsupported platforms if the flag is set
+                        if ctx.supported_platform_only {
+                            dropped_due_to_unsupported = true;
+                            continue;
+                        }
+                        // If flag is not set, include the empty platform set
+                        platforms.extend(oses);
+                    } else {
+                        platforms.extend(oses);
                     }
-                    platforms.extend(oses);
                 }
             }
         }
@@ -555,6 +569,7 @@ fn emit_rust_library(
     lib_target: &Target,
     manifest_dir: &Utf8PathBuf,
     buckal_name: &str,
+    ctx: &BuckalContext,
 ) -> RustLibrary {
     let mut rust_library = RustLibrary {
         name: buckal_name.to_owned(),
@@ -595,7 +610,7 @@ fn emit_rust_library(
     }
 
     // Set dependencies
-    set_deps(&mut rust_library, node, packages_map, CargoTargetKind::Lib);
+    set_deps(&mut rust_library, node, packages_map, CargoTargetKind::Lib, ctx);
 
     rust_library
 }
@@ -608,6 +623,7 @@ fn emit_rust_binary(
     bin_target: &Target,
     manifest_dir: &Utf8PathBuf,
     buckal_name: &str,
+    ctx: &BuckalContext,
 ) -> RustBinary {
     let mut rust_binary = RustBinary {
         name: buckal_name.to_owned(),
@@ -636,7 +652,7 @@ fn emit_rust_binary(
     );
 
     // Set dependencies
-    set_deps(&mut rust_binary, node, packages_map, CargoTargetKind::Bin);
+    set_deps(&mut rust_binary, node, packages_map, CargoTargetKind::Bin, ctx);
 
     if let Some(platforms) = lookup_platforms(&package.name) {
         rust_binary.compatible_with = buck_labels(&platforms);
@@ -653,6 +669,7 @@ fn emit_rust_test(
     test_target: &Target,
     manifest_dir: &Utf8PathBuf,
     buckal_name: &str,
+    ctx: &BuckalContext,
 ) -> RustTest {
     let mut rust_test = RustTest {
         name: buckal_name.to_owned(),
@@ -681,7 +698,7 @@ fn emit_rust_test(
     );
 
     // Set dependencies
-    set_deps(&mut rust_test, node, packages_map, CargoTargetKind::Test);
+    set_deps(&mut rust_test, node, packages_map, CargoTargetKind::Test, ctx);
 
     if let Some(platforms) = lookup_platforms(&package.name) {
         rust_test.compatible_with = buck_labels(&platforms);
@@ -697,6 +714,7 @@ fn emit_buildscript_build(
     node: &Node,
     packages_map: &HashMap<PackageId, Package>,
     manifest_dir: &Utf8PathBuf,
+    ctx: &BuckalContext,
 ) -> RustBinary {
     // create the build script rule
     let mut buildscript_build = RustBinary {
@@ -730,6 +748,7 @@ fn emit_buildscript_build(
         node,
         packages_map,
         CargoTargetKind::CustomBuild,
+        ctx,
     );
 
     buildscript_build
@@ -917,6 +936,7 @@ impl BuckalChange {
                         // Patch BUCK Rules
                         let buck_path = vendor_dir.join("BUCK");
                         if buck_path.exists() {
+                            // buckal_warn!("test: buck_path exits: {}", buck_path);
                             // Skip merging manual changes if `--no-merge` is set
                             if !ctx.no_merge && !ctx.repo_config.patch_fields.is_empty() {
                                 let existing_rules = parse_buck_file(&buck_path)
@@ -928,6 +948,7 @@ impl BuckalChange {
                                 );
                             }
                         } else {
+                            // buckal_warn!("test: buck_path not exit: {}", buck_path);
                             std::fs::File::create(&buck_path).expect("Failed to create BUCK file");
                         }
 
