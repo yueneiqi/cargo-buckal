@@ -532,10 +532,16 @@ fn set_deps(
                 Some(platform) => {
                     let oses = oses_from_platform(platform);
                     if oses.is_empty() {
-                        dropped_due_to_unsupported = true;
-                        continue;
+                        // Only drop unsupported platforms if the flag is set
+                        if ctx.supported_platform_only {
+                            dropped_due_to_unsupported = true;
+                            continue;
+                        }
+                        // If flag is not set, include the empty platform set
+                        platforms.extend(oses);
+                    } else {
+                        platforms.extend(oses);
                     }
-                    platforms.extend(oses);
                 }
             }
         }
@@ -955,6 +961,7 @@ impl BuckalChange {
                         // Patch BUCK Rules
                         let buck_path = vendor_dir.join("BUCK");
                         if buck_path.exists() {
+                            // buckal_warn!("test: buck_path exits: {}", buck_path);
                             // Skip merging manual changes if `--no-merge` is set
                             if !ctx.no_merge && !ctx.repo_config.patch_fields.is_empty() {
                                 let existing_rules = parse_buck_file(&buck_path)
@@ -966,6 +973,7 @@ impl BuckalChange {
                                 );
                             }
                         } else {
+                            // buckal_warn!("test: buck_path not exit: {}", buck_path);
                             std::fs::File::create(&buck_path).expect("Failed to create BUCK file");
                         }
 
