@@ -20,7 +20,7 @@ use crate::{
         RustBinary, RustLibrary, RustRule, RustTest, parse_buck_file, patch_buck_rules,
     },
     buck2::Buck2Command,
-    buckal_log, buckal_warn, buckal_note,
+    buckal_log, buckal_note, buckal_warn,
     cache::{BuckalChange, ChangeType},
     context::BuckalContext,
     platform::{Os, buck_labels, lookup_platforms, oses_from_platform},
@@ -610,7 +610,13 @@ fn emit_rust_library(
     }
 
     // Set dependencies
-    set_deps(&mut rust_library, node, packages_map, CargoTargetKind::Lib, ctx);
+    set_deps(
+        &mut rust_library,
+        node,
+        packages_map,
+        CargoTargetKind::Lib,
+        ctx,
+    );
 
     rust_library
 }
@@ -652,7 +658,13 @@ fn emit_rust_binary(
     );
 
     // Set dependencies
-    set_deps(&mut rust_binary, node, packages_map, CargoTargetKind::Bin, ctx);
+    set_deps(
+        &mut rust_binary,
+        node,
+        packages_map,
+        CargoTargetKind::Bin,
+        ctx,
+    );
 
     if let Some(platforms) = lookup_platforms(&package.name) {
         rust_binary.compatible_with = buck_labels(&platforms);
@@ -698,7 +710,13 @@ fn emit_rust_test(
     );
 
     // Set dependencies
-    set_deps(&mut rust_test, node, packages_map, CargoTargetKind::Test, ctx);
+    set_deps(
+        &mut rust_test,
+        node,
+        packages_map,
+        CargoTargetKind::Test,
+        ctx,
+    );
 
     if let Some(platforms) = lookup_platforms(&package.name) {
         rust_test.compatible_with = buck_labels(&platforms);
@@ -1064,10 +1082,7 @@ fn windows_import_lib_flags(ctx: &BuckalContext) -> WindowsImportLibFlags {
 
     // GNU targets.
     add_all("windows_x86_64_gnu", &mut flags.gnu);
-    add_all(
-        "winapi-x86_64-pc-windows-gnu",
-        &mut flags.gnu,
-    );
+    add_all("winapi-x86_64-pc-windows-gnu", &mut flags.gnu);
 
     // MSVC targets (per CPU).
     add_all("windows_x86_64_msvc", &mut flags.msvc_x86_64);
