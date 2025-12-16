@@ -38,6 +38,7 @@ impl Os {
 }
 
 /// Tier1 host platforms used for cfg evaluation.
+/// Ref: https://doc.rust-lang.org/nightly/rustc/platform-support.html#tier-1-with-host-tools
 static SUPPORTED_TARGETS: &[(Os, &str)] = &[
     (Os::Macos, "aarch64-apple-darwin"),
     (Os::Windows, "aarch64-pc-windows-msvc"),
