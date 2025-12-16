@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet as Set, HashMap},
     io::{BufWriter, Write},
-    sync::{Mutex, OnceLock},
 };
 
 use anyhow::{bail, Context, Result};
@@ -20,7 +19,7 @@ use crate::{
         Rule, RustBinary, RustLibrary, RustRule, RustTest, parse_buck_file, patch_buck_rules,
     },
     buck2::Buck2Command,
-    buckal_log, buckal_warn,
+    buckal_log, buckal_note, buckal_warn,
     cache::{BuckalChange, ChangeType},
     context::BuckalContext,
     platform::{Os, buck_labels, lookup_platforms, oses_from_platform},
@@ -322,23 +321,7 @@ fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> b
     }
 }
 
-static FIRST_PARTY_LABEL_CACHE: OnceLock<Mutex<HashMap<Utf8PathBuf, String>>> = OnceLock::new();
-
-fn first_party_label_cache() -> &'static Mutex<HashMap<Utf8PathBuf, String>> {
-    FIRST_PARTY_LABEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
-    let manifest_path = dep_package.manifest_path.clone();
-    if let Some(cached) = first_party_label_cache()
-        .lock()
-        .expect("first_party_label_cache poisoned")
-        .get(&manifest_path)
-        .cloned()
-    {
-        return Ok(cached);
-    }
-
     let buck2_root = get_buck2_root().context("failed to get buck2 root")?;
     let manifest_dir = dep_package
         .manifest_path
@@ -400,12 +383,6 @@ fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
         .context("buck2 targets output is missing `name`")?;
 
     let label = format!("{buck_package}:{buck_name}");
-
-    first_party_label_cache()
-        .lock()
-        .expect("first_party_label_cache poisoned")
-        .insert(manifest_path, label.clone());
-
     Ok(label)
 }
 
@@ -446,12 +423,32 @@ fn resolve_dep_label(
     }
 }
 
+/// Insert a dependency label into `rust_rule` in the appropriate attribute.
+///
+/// `target` is the Buck label we want the rule to depend on. If `alias` is `Some`, the
+/// dependency is recorded as a *named* dependency (used for renamed crates); otherwise it is
+/// recorded as an unnamed dependency.
+///
+/// # Platforms
+///
+/// `platforms` controls whether the dependency is unconditional or platform-specific:
+/// - `None` means the dependency applies on all platforms and is inserted into `deps` or
+///   `named_deps`.
+/// - `Some(set)` means the dependency is conditional and is inserted into `os_deps` or
+///   `os_named_deps` for each OS in `set`.
+///
+/// # Conflict handling
+///
+/// - For unconditional named dependencies (`named_deps`), if an alias is encountered more than
+///   once with different targets, we emit a warning and keep the first value.
+/// - For platform-specific named dependencies (`os_named_deps`), an alias may map to only one
+///   target per OS. Conflicting targets for the same `(alias, os)` are treated as an error.
 fn insert_dep(
     rust_rule: &mut dyn RustRule,
     target: &str,
     alias: Option<&str>,
     platforms: Option<&std::collections::BTreeSet<Os>>,
-) {
+) -> Result<()> {
     if let Some(platforms) = platforms {
         for os in platforms {
             let os_key = os.key().to_owned();
@@ -463,7 +460,7 @@ fn insert_dep(
 
                 if let Some(existing) = entries.get(&os_key) {
                     if existing != target {
-                        buckal_warn!(
+                        bail!(
                             "os_named_deps alias '{}' had conflicting targets for platform '{}': '{}' vs '{}'",
                             alias,
                             os_key,
@@ -502,6 +499,7 @@ fn insert_dep(
     } else {
         rust_rule.deps_mut().insert(target.to_owned());
     }
+    Ok(())
 }
 
 fn set_deps(
@@ -510,7 +508,7 @@ fn set_deps(
     packages_map: &HashMap<PackageId, Package>,
     kind: CargoTargetKind,
     ctx: &BuckalContext,
-) {
+) -> Result<()> {
     let use_workspace_alias = ctx.repo_config.inherit_workspace_deps && node.id == ctx.root.id;
 
     for dep in &node.deps {
@@ -521,6 +519,7 @@ fn set_deps(
         let mut unconditional = false;
         let mut platforms = Set::<Os>::new();
         let mut dropped_due_to_unsupported = false;
+        let mut has_unmapped_platform = false;
 
         for dk in dep
             .dep_kinds
@@ -537,8 +536,9 @@ fn set_deps(
                             dropped_due_to_unsupported = true;
                             continue;
                         }
-                        // If flag is not set, include the empty platform set
-                        platforms.extend(oses);
+                        // If flag is not set, fall back to unconditional (handled below) so we
+                        // don't silently drop dependencies when the platform can't be mapped.
+                        has_unmapped_platform = true;
                     } else {
                         platforms.extend(oses);
                     }
@@ -548,27 +548,45 @@ fn set_deps(
 
         if !unconditional && platforms.is_empty() {
             if dropped_due_to_unsupported {
-                buckal_warn!(
+                buckal_note!(
                     "Dependency '{}' (package '{}') targets only unsupported platforms and will be omitted.",
                     dep.name,
                     dep_package.name
                 );
+                continue;
             }
-            continue;
+            if has_unmapped_platform {
+                // `dep.name` is the dependency/crate name as referenced by the parent crate (after
+                // Cargo normalization and/or dependency renames), while `dep_package.name` is the
+                // package name from the dependency's manifest. They can differ for renamed deps or
+                // for hyphenated packages (e.g. `foo-bar` -> crate name `foo_bar`).
+                buckal_note!(
+                    "Dependency '{}' (package '{}') targets platform(s) that could not be mapped; treating as unconditional because --supported-platform-only is not set.",
+                    dep.name,
+                    dep_package.name
+                );
+                unconditional = true;
+            }
+            if !unconditional && platforms.is_empty() {
+                continue;
+            }
         }
 
-        let (target_label, alias) =
-            resolve_dep_label(dep, dep_package, use_workspace_alias).unwrap_or_exit_ctx(format!(
+        let (target_label, alias) = resolve_dep_label(dep, dep_package, use_workspace_alias)
+            .with_context(|| {
+            format!(
                 "failed to resolve dependency label for '{}' (package '{}')",
                 dep.name, dep_package.name
-            ));
+            )
+        })?;
 
         if unconditional {
-            insert_dep(rust_rule, &target_label, alias.as_deref(), None);
+            insert_dep(rust_rule, &target_label, alias.as_deref(), None)?;
         } else {
-            insert_dep(rust_rule, &target_label, alias.as_deref(), Some(&platforms));
+            insert_dep(rust_rule, &target_label, alias.as_deref(), Some(&platforms))?;
         }
     }
+    Ok(())
 }
 
 /// Emit `rust_library` rule for the given lib target
@@ -605,13 +623,14 @@ fn emit_rust_library(
     // Set the crate root path
     rust_library.crate_root = format!(
         "vendor/{}",
-        lib_target
-            .src_path
-            .to_owned()
-            .strip_prefix(manifest_dir)
-            .expect("Failed to get library source path")
-            .as_str()
-            .replace('\\', "/")
+        normalize_path_for_buck(
+            lib_target
+                .src_path
+                .to_owned()
+                .strip_prefix(manifest_dir)
+                .expect("Failed to get library source path")
+                .as_str()
+        )
     );
 
     // look up platform compatibility
@@ -627,6 +646,8 @@ fn emit_rust_library(
         CargoTargetKind::Lib,
         ctx,
     );
+    )
+    .unwrap_or_exit_ctx(format!("failed to set dependencies for '{}'", buckal_name));
     rust_library
 }
 
@@ -657,13 +678,14 @@ fn emit_rust_binary(
     // Set the crate root path
     rust_binary.crate_root = format!(
         "vendor/{}",
-        bin_target
-            .src_path
-            .to_owned()
-            .strip_prefix(manifest_dir)
-            .expect("Failed to get binary source path")
-            .as_str()
-            .replace('\\', "/")
+        normalize_path_for_buck(
+            bin_target
+                .src_path
+                .to_owned()
+                .strip_prefix(manifest_dir)
+                .expect("Failed to get binary source path")
+                .as_str()
+        )
     );
 
     // Set dependencies
@@ -673,7 +695,8 @@ fn emit_rust_binary(
         packages_map,
         CargoTargetKind::Bin,
         ctx,
-    );
+    )
+    .unwrap_or_exit_ctx(format!("failed to set dependencies for '{}'", buckal_name));
 
     if let Some(platforms) = lookup_platforms(&package.name) {
         rust_binary.compatible_with = buck_labels(&platforms);
@@ -708,13 +731,14 @@ fn emit_rust_test(
     // Set the crate root path
     rust_test.crate_root = format!(
         "vendor/{}",
-        test_target
-            .src_path
-            .to_owned()
-            .strip_prefix(manifest_dir)
-            .expect("Failed to get binary source path")
-            .as_str()
-            .replace('\\', "/")
+        normalize_path_for_buck(
+            test_target
+                .src_path
+                .to_owned()
+                .strip_prefix(manifest_dir)
+                .expect("Failed to get binary source path")
+                .as_str()
+        )
     );
 
     // Set dependencies
@@ -724,7 +748,8 @@ fn emit_rust_test(
         packages_map,
         CargoTargetKind::Test,
         ctx,
-    );
+    )
+    .unwrap_or_exit_ctx(format!("failed to set dependencies for '{}'", buckal_name));
 
     if let Some(platforms) = lookup_platforms(&package.name) {
         rust_test.compatible_with = buck_labels(&platforms);
@@ -774,7 +799,11 @@ fn emit_buildscript_build(
         packages_map,
         CargoTargetKind::CustomBuild,
         ctx,
-    );
+    )
+    .unwrap_or_exit_ctx(format!(
+        "failed to set dependencies for '{}'",
+        &buildscript_build.name
+    ));
 
     buildscript_build
 }
@@ -912,6 +941,13 @@ fn get_vendor_target(package: &Package) -> String {
     format!(":{}-vendor", package.name)
 }
 
+/// Normalize a path for Buck by converting backslashes to forward slashes.
+/// This normalization is critical on Windows, where paths use backslashes,
+/// as Buck2 requires forward slashes in all generated BUCK files regardless of the host platform.
+fn normalize_path_for_buck(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 impl BuckalChange {
     pub fn apply(&self, ctx: &BuckalContext) {
         // This function applies changes to the BUCK files of detected packages in the cache diff, but skips the root package.
@@ -961,7 +997,6 @@ impl BuckalChange {
                         // Patch BUCK Rules
                         let buck_path = vendor_dir.join("BUCK");
                         if buck_path.exists() {
-                            // buckal_warn!("test: buck_path exits: {}", buck_path);
                             // Skip merging manual changes if `--no-merge` is set
                             if !ctx.no_merge && !ctx.repo_config.patch_fields.is_empty() {
                                 let existing_rules = parse_buck_file(&buck_path)
@@ -973,7 +1008,6 @@ impl BuckalChange {
                                 );
                             }
                         } else {
-                            // buckal_warn!("test: buck_path not exit: {}", buck_path);
                             std::fs::File::create(&buck_path).expect("Failed to create BUCK file");
                         }
 
@@ -1084,38 +1118,42 @@ fn patch_root_windows_rustc_flags(mut buck_content: String, ctx: &BuckalContext)
 fn windows_import_lib_flags(ctx: &BuckalContext) -> WindowsImportLibFlags {
     let mut flags = WindowsImportLibFlags::default();
 
-    let add_all = |name: &str, out: &mut Vec<String>| {
+    let push_build_script_rustc_flags = |package_name: &str, out: &mut Vec<String>| {
         let mut matches: Vec<_> = ctx
             .packages_map
             .values()
-            .filter(|p| p.name.to_string() == name)
+            .filter(|p| p.name.to_string() == package_name)
             .collect();
         matches.sort_by(|a, b| a.version.cmp(&b.version));
         for package in matches {
-            let package_name = package.name.to_string();
+            let pkg_name = package.name.to_string();
             out.push(format!(
                 "@$(location //{}/{}/{}:{}-build-script-run[rustc_flags])",
-                RUST_CRATES_ROOT, package_name, package.version, package_name
+                RUST_CRATES_ROOT, pkg_name, package.version, pkg_name
             ));
         }
     };
 
     // GNU targets.
-    add_all("windows_x86_64_gnu", &mut flags.gnu);
-    add_all(
-        "winapi-x86_64-pc-windows-gnu",
-        &mut flags.gnu,
-    );
+    push_build_script_rustc_flags("windows_x86_64_gnu", &mut flags.gnu);
+    push_build_script_rustc_flags("winapi-x86_64-pc-windows-gnu", &mut flags.gnu);
 
     // MSVC targets (per CPU).
-    add_all("windows_x86_64_msvc", &mut flags.msvc_x86_64);
-    add_all("windows_i686_msvc", &mut flags.msvc_i686);
-    add_all("windows_aarch64_msvc", &mut flags.msvc_aarch64);
+    push_build_script_rustc_flags("windows_x86_64_msvc", &mut flags.msvc_x86_64);
+    push_build_script_rustc_flags("windows_i686_msvc", &mut flags.msvc_i686);
+    push_build_script_rustc_flags("windows_aarch64_msvc", &mut flags.msvc_aarch64);
 
     flags
 }
 
 fn render_windows_rustc_flags_select(flags: &WindowsImportLibFlags) -> String {
+    const CONSTRAINT_WINDOWS: &str = "prelude//os/constraints:windows";
+    const CONSTRAINT_ABI_GNU: &str = "prelude//abi/constraints:gnu";
+    const CONSTRAINT_ABI_MSVC: &str = "prelude//abi/constraints:msvc";
+    const CONSTRAINT_CPU_ARM64: &str = "prelude//cpu/constraints:arm64";
+    const CONSTRAINT_CPU_X86_32: &str = "prelude//cpu/constraints:x86_32";
+    const SELECT_DEFAULT: &str = "DEFAULT";
+
     if flags.gnu.is_empty()
         && flags.msvc_x86_64.is_empty()
         && flags.msvc_i686.is_empty()
@@ -1124,94 +1162,326 @@ fn render_windows_rustc_flags_select(flags: &WindowsImportLibFlags) -> String {
         return String::new();
     }
 
+    #[derive(Clone, Debug)]
+    enum BuckExpr<'a> {
+        Str(Cow<'a, str>),
+        List {
+            items: Vec<BuckExpr<'a>>,
+            multiline: bool,
+        },
+        Select(Vec<(Cow<'a, str>, BuckExpr<'a>)>),
+    }
+
+    fn write_indent(out: &mut String, spaces: usize) {
+        for _ in 0..spaces {
+            out.push(' ');
+        }
+    }
+
+    fn write_string_literal(out: &mut String, s: &str) {
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                _ => out.push(c),
+            }
+        }
+        out.push('"');
+    }
+
+    impl<'a> BuckExpr<'a> {
+        fn string_list(items: &'a [String]) -> Self {
+            Self::List {
+                items: items
+                    .iter()
+                    .map(|s| Self::Str(Cow::Borrowed(s.as_str())))
+                    .collect(),
+                multiline: true,
+            }
+        }
+
+        fn empty_inline_list() -> Self {
+            Self::List {
+                items: vec![],
+                multiline: false,
+            }
+        }
+
+        fn write_inline(&self, out: &mut String, base_indent: usize) {
+            match self {
+                Self::Str(s) => write_string_literal(out, s),
+                Self::List { items, multiline } => {
+                    if *multiline {
+                        out.push_str("[\n");
+                        for item in items {
+                            write_indent(out, base_indent + 4);
+                            item.write_inline(out, base_indent + 4);
+                            out.push_str(",\n");
+                        }
+                        write_indent(out, base_indent);
+                        out.push(']');
+                        return;
+                    }
+
+                    out.push('[');
+                    for (idx, item) in items.iter().enumerate() {
+                        if idx > 0 {
+                            out.push_str(", ");
+                        }
+                        item.write_inline(out, base_indent);
+                    }
+                    out.push(']');
+                }
+                Self::Select(entries) => {
+                    out.push_str("select({\n");
+                    for (k, v) in entries {
+                        write_indent(out, base_indent + 4);
+                        write_string_literal(out, k);
+                        out.push_str(": ");
+                        v.write_inline(out, base_indent + 4);
+                        out.push_str(",\n");
+                    }
+                    write_indent(out, base_indent);
+                    out.push_str("})");
+                }
+            }
+        }
+    }
+
+    fn msvc_cpu_select(flags: &WindowsImportLibFlags) -> BuckExpr<'_> {
+        BuckExpr::Select(vec![
+            (
+                Cow::Borrowed(CONSTRAINT_CPU_ARM64),
+                BuckExpr::string_list(&flags.msvc_aarch64),
+            ),
+            (
+                Cow::Borrowed(CONSTRAINT_CPU_X86_32),
+                BuckExpr::string_list(&flags.msvc_i686),
+            ),
+            (
+                Cow::Borrowed(SELECT_DEFAULT),
+                BuckExpr::string_list(&flags.msvc_x86_64),
+            ),
+        ])
+    }
+
+    let windows_select = BuckExpr::Select(vec![
+        (
+            Cow::Borrowed(CONSTRAINT_ABI_GNU),
+            BuckExpr::string_list(&flags.gnu),
+        ),
+        (
+            Cow::Borrowed(CONSTRAINT_ABI_MSVC),
+            msvc_cpu_select(flags),
+        ),
+        (Cow::Borrowed(SELECT_DEFAULT), msvc_cpu_select(flags)),
+    ]);
+
+    let select_expr = BuckExpr::Select(vec![
+        (Cow::Borrowed(CONSTRAINT_WINDOWS), windows_select),
+        (Cow::Borrowed(SELECT_DEFAULT), BuckExpr::empty_inline_list()),
+    ]);
+
     let mut out = String::new();
-    out.push_str("select({\n");
-    out.push_str("        \"prelude//os/constraints:windows\": select({\n");
-
-    // GNU branch.
-    out.push_str("            \"prelude//abi/constraints:gnu\": [\n");
-    for f in &flags.gnu {
-        out.push_str(&format!("                \"{}\",\n", f));
-    }
-    out.push_str("            ],\n");
-
-    // MSVC branch (cpu-specific).
-    out.push_str("            \"prelude//abi/constraints:msvc\": select({\n");
-    out.push_str("                \"prelude//cpu/constraints:arm64\": [\n");
-    for f in &flags.msvc_aarch64 {
-        out.push_str(&format!("                    \"{}\",\n", f));
-    }
-    out.push_str("                ],\n");
-    out.push_str("                \"prelude//cpu/constraints:x86_32\": [\n");
-    for f in &flags.msvc_i686 {
-        out.push_str(&format!("                    \"{}\",\n", f));
-    }
-    out.push_str("                ],\n");
-    out.push_str("                \"DEFAULT\": [\n");
-    for f in &flags.msvc_x86_64 {
-        out.push_str(&format!("                    \"{}\",\n", f));
-    }
-    out.push_str("                ],\n");
-    out.push_str("            }),\n");
-
-    // Default branch (when ABI constraint is missing).
-    out.push_str("            \"DEFAULT\": select({\n");
-    out.push_str("                \"prelude//cpu/constraints:arm64\": [\n");
-    for f in &flags.msvc_aarch64 {
-        out.push_str(&format!("                    \"{}\",\n", f));
-    }
-    out.push_str("                ],\n");
-    out.push_str("                \"prelude//cpu/constraints:x86_32\": [\n");
-    for f in &flags.msvc_i686 {
-        out.push_str(&format!("                    \"{}\",\n", f));
-    }
-    out.push_str("                ],\n");
-    out.push_str("                \"DEFAULT\": [\n");
-    for f in &flags.msvc_x86_64 {
-        out.push_str(&format!("                    \"{}\",\n", f));
-    }
-    out.push_str("                ],\n");
-    out.push_str("            }),\n");
-
-    out.push_str("        }),\n");
-    out.push_str("        \"DEFAULT\": [],\n");
-    out.push_str("    })");
-
+    // The expression is appended inline after `] +`, but we want the body to be indented as if it
+    // started at the `rustc_flags` attribute's indentation level (4 spaces).
+    select_expr.write_inline(&mut out, 4);
     out
 }
 
 fn patch_rust_binary_rustc_flags(buck_content: &str, bin_name: &str, select_expr: &str) -> String {
-    let name_marker = format!("    name = \"{bin_name}\",");
-    let Some(name_pos) = buck_content.find(&name_marker) else {
-        return buck_content.to_owned();
-    };
-
-    let Some(block_start) = buck_content[..name_pos].rfind("rust_binary(\n") else {
-        return buck_content.to_owned();
-    };
-
-    let Some(rustc_flags_pos) = buck_content[name_pos..].find("    rustc_flags = [") else {
-        return buck_content.to_owned();
-    };
-    let rustc_flags_pos = name_pos + rustc_flags_pos;
-
-    let after_rustc_flags = rustc_flags_pos + "    rustc_flags = [".len();
-    let Some(list_end_rel) = buck_content[after_rustc_flags..].find("\n    ],\n") else {
-        return buck_content.to_owned();
-    };
-    let list_end = after_rustc_flags + list_end_rel + "\n    ]".len();
-
-    // Ensure we're patching the rust_binary block that actually belongs to this target.
-    if block_start > rustc_flags_pos {
-        return buck_content.to_owned();
+    fn find_rule_end(haystack: &str, start: usize) -> Option<usize> {
+        // Find a closing paren on its own line (column 0), which is how serde_starlark ends rules.
+        // Return the index just after the ')'.
+        let mut search_from = start;
+        while let Some(rel) = haystack[search_from..].find("\n)") {
+            let close_paren = search_from + rel + 1;
+            let next = close_paren + 1;
+            if next == haystack.len() || haystack.as_bytes()[next] == b'\n' {
+                return Some(next);
+            }
+            search_from = next;
+        }
+        None
     }
 
-    let mut out = String::with_capacity(buck_content.len() + select_expr.len() + 64);
-    out.push_str(&buck_content[..list_end]);
-    out.push_str(" + ");
-    out.push_str(select_expr);
-    out.push_str(&buck_content[list_end..]);
-    out
+    let name_marker = format!("    name = \"{bin_name}\",");
+    let rustc_flags_marker = "    rustc_flags = [";
+
+    let mut search_from = 0usize;
+    while let Some(block_start_rel) = buck_content[search_from..].find("rust_binary(\n") {
+        let block_start = search_from + block_start_rel;
+        let Some(block_end) = find_rule_end(buck_content, block_start) else {
+            break;
+        };
+
+        let block = &buck_content[block_start..block_end];
+        if !block.contains(&name_marker) {
+            search_from = block_end;
+            continue;
+        }
+
+        let Some(rustc_flags_rel) = block.find(rustc_flags_marker) else {
+            return buck_content.to_owned();
+        };
+        let rustc_flags_pos = block_start + rustc_flags_rel;
+
+        let after_rustc_flags = rustc_flags_pos + rustc_flags_marker.len();
+        let Some(list_end_rel) = buck_content[after_rustc_flags..block_end].find("\n    ],\n")
+        else {
+            return buck_content.to_owned();
+        };
+        let list_end = after_rustc_flags + list_end_rel + "\n    ]".len();
+
+        let mut out = String::with_capacity(buck_content.len() + select_expr.len() + 64);
+        out.push_str(&buck_content[..list_end]);
+        out.push_str(" + ");
+        out.push_str(select_expr);
+        out.push_str(&buck_content[list_end..]);
+        return out;
+    }
+
+    buck_content.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use indoc::indoc;
+
+    #[test]
+    fn render_windows_rustc_flags_select_empty() {
+        let flags = WindowsImportLibFlags::default();
+        assert_eq!(render_windows_rustc_flags_select(&flags), "");
+    }
+
+    #[test]
+    fn render_windows_rustc_flags_select_structured_output() {
+        let flags = WindowsImportLibFlags {
+            gnu: vec!["@gnu1".to_owned(), "@gnu2".to_owned()],
+            msvc_x86_64: vec!["@msvc64".to_owned()],
+            msvc_i686: vec!["@msvc32".to_owned()],
+            msvc_aarch64: vec!["@msvcarm".to_owned()],
+        };
+
+        let rendered = render_windows_rustc_flags_select(&flags);
+
+        let expected = indoc! {r#"
+            select({
+                    "prelude//os/constraints:windows": select({
+                        "prelude//abi/constraints:gnu": [
+                            "@gnu1",
+                            "@gnu2",
+                        ],
+                        "prelude//abi/constraints:msvc": select({
+                            "prelude//cpu/constraints:arm64": [
+                                "@msvcarm",
+                            ],
+                            "prelude//cpu/constraints:x86_32": [
+                                "@msvc32",
+                            ],
+                            "DEFAULT": [
+                                "@msvc64",
+                            ],
+                        }),
+                        "DEFAULT": select({
+                            "prelude//cpu/constraints:arm64": [
+                                "@msvcarm",
+                            ],
+                            "prelude//cpu/constraints:x86_32": [
+                                "@msvc32",
+                            ],
+                            "DEFAULT": [
+                                "@msvc64",
+                            ],
+                        }),
+                    }),
+                    "DEFAULT": [],
+                })"#};
+
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn patch_rust_binary_rustc_flags_patches_named_binary_only() {
+        let input = indoc! {r#"
+            rust_library(
+                name = "bin",
+                rustc_flags = [
+                    "libflag",
+                ],
+            )
+
+            rust_binary(
+                name = "bin",
+                rustc_flags = [
+                    "binflag",
+                ],
+            )
+            "#};
+
+        let expected = indoc! {r#"
+            rust_library(
+                name = "bin",
+                rustc_flags = [
+                    "libflag",
+                ],
+            )
+
+            rust_binary(
+                name = "bin",
+                rustc_flags = [
+                    "binflag",
+                ] + select({"DEFAULT": []}),
+            )
+            "#};
+
+        let patched = patch_rust_binary_rustc_flags(input, "bin", "select({\"DEFAULT\": []})");
+        assert_eq!(patched, expected);
+    }
+
+    #[test]
+    fn patch_rust_binary_rustc_flags_does_not_touch_other_binaries() {
+        let input = indoc! {r#"
+            rust_binary(
+                name = "a",
+                rustc_flags = [
+                    "aflag",
+                ],
+            )
+
+            rust_binary(
+                name = "b",
+                rustc_flags = [
+                    "bflag",
+                ],
+            )
+            "#};
+
+        let expected = indoc! {r#"
+            rust_binary(
+                name = "a",
+                rustc_flags = [
+                    "aflag",
+                ],
+            )
+
+            rust_binary(
+                name = "b",
+                rustc_flags = [
+                    "bflag",
+                ] + select({"DEFAULT": []}),
+            )
+            "#};
+
+        let patched = patch_rust_binary_rustc_flags(input, "b", "select({\"DEFAULT\": []})");
+        assert_eq!(patched, expected);
+    }
 }
 
 pub fn generate_third_party_aliases(ctx: &BuckalContext) {
