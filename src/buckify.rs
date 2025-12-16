@@ -322,24 +322,9 @@ fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> b
     }
 }
 
-static FIRST_PARTY_LABEL_CACHE: OnceLock<Mutex<HashMap<Utf8PathBuf, String>>> = OnceLock::new();
-
-fn first_party_label_cache() -> &'static Mutex<HashMap<Utf8PathBuf, String>> {
-    FIRST_PARTY_LABEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
-    let manifest_path = dep_package.manifest_path.clone();
-    if let Some(cached) = first_party_label_cache()
-        .lock()
-        .expect("first_party_label_cache poisoned")
-        .get(&manifest_path)
-        .cloned()
-    {
-        return Ok(cached);
-    }
-
     let buck2_root = get_buck2_root().context("failed to get buck2 root")?;
+    let manifest_path = dep_package.manifest_path.clone();
     let manifest_dir = dep_package
         .manifest_path
         .parent()
@@ -370,7 +355,8 @@ fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
         );
     }
 
-    let targets: Vec<Value> = serde_json::from_slice(&output.stdout)
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let targets: Vec<Value> = serde_json::from_slice(&json_str)
         .context("failed to parse buck2 targets JSON output")?;
     let target_item = targets
         .iter()
@@ -400,12 +386,6 @@ fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
         .context("buck2 targets output is missing `name`")?;
 
     let label = format!("{buck_package}:{buck_name}");
-
-    first_party_label_cache()
-        .lock()
-        .expect("first_party_label_cache poisoned")
-        .insert(manifest_path, label.clone());
-
     Ok(label)
 }
 
