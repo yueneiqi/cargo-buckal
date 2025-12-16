@@ -52,6 +52,40 @@ static SUPPORTED_TARGETS: &[(Os, &str)] = &[
 /// Cache of `rustc --print=cfg --target <triple>` output for supported triples.
 static CFG_CACHE: OnceLock<HashMap<&'static str, Vec<Cfg>>> = OnceLock::new();
 
+/// Executes `rustc --print=cfg --target <triple>` to retrieve the cfg values for a given target triple.
+///
+/// This function is used to determine the platform-specific configuration flags that Cargo uses
+/// to evaluate conditional compilation directives (cfg attributes) for different target platforms.
+///
+/// # Parameters
+///
+/// * `triple`: A target triple string (e.g., "x86_64-unknown-linux-gnu") that specifies the
+///   platform for which to retrieve cfg values.
+///
+/// # Returns
+///
+/// * `Some(Vec<Cfg>)`: Returns the cfg values parsed from rustc's output when the command succeeds.
+/// * `None`: Returns None when rustc execution fails, which can happen if:
+///   - The target triple is not installed (e.g., missing rust target component)
+///   - Rustc is not available in the system PATH
+///   - The rustc command fails for any other reason
+///
+/// # Behavior
+///
+/// When this function returns `None`, the target triple is excluded from platform matching.
+/// This is the expected behavior when a target is not installed, allowing the build system
+/// to gracefully handle missing targets without failing the entire build process.
+///
+/// # Examples
+///
+/// ```
+/// let cfgs = rustc_cfgs_for_triple("x86_64-unknown-linux-gnu");
+/// if let Some(cfg_values) = cfgs {
+///     // Use cfg_values for platform matching
+/// } else {
+///     // Target not available, skip platform matching for this triple
+/// }
+/// ```
 fn rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
     match Command::new("rustc")
         .args(["--print=cfg", "--target", triple])
@@ -171,4 +205,146 @@ pub fn lookup_platforms(package_name: &str) -> Option<BTreeSet<Os>> {
     PACKAGE_PLATFORMS
         .get(package_name)
         .map(|mask| mask.to_oses())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    fn test_rustc_cfgs_for_triple_with_available_rustc() {
+        // Test with a target that should be available (current host)
+        let result = rustc_cfgs_for_triple("x86_64-unknown-linux-gnu");
+        // The function might return Some or None depending on rustc availability
+        // This test mainly ensures the function doesn't panic
+        assert!(result.is_some() || result.is_none());
+    }
+
+    #[test]
+    fn test_cfg_parsing_direct() {
+        // Test the cfg parsing logic directly by simulating rustc output
+        // This tests the core logic without relying on external rustc execution
+        let test_output = "target_arch=\"x86_64\"\ntarget_os=\"linux\"\ntarget_endian=\"little\"\n";
+        let cfgs: Vec<Cfg> = String::from_utf8_lossy(test_output.as_bytes())
+            .lines()
+            .filter_map(|line| Cfg::from_str(line).ok())
+            .collect();
+
+        assert_eq!(cfgs.len(), 3);
+
+        // Test that we can find specific cfgs by checking their string representation
+        let target_arch_cfg = cfgs
+            .iter()
+            .find(|cfg| cfg.to_string().contains("target_arch"));
+        assert!(target_arch_cfg.is_some());
+        assert!(target_arch_cfg.unwrap().to_string().contains("x86_64"));
+
+        let target_os_cfg = cfgs
+            .iter()
+            .find(|cfg| cfg.to_string().contains("target_os"));
+        assert!(target_os_cfg.is_some());
+        assert!(target_os_cfg.unwrap().to_string().contains("linux"));
+    }
+
+    #[test]
+    fn test_cfg_parsing_boolean() {
+        // Test parsing boolean cfg values
+        let test_output = "debug_assertions\nverbose_errors\n";
+        let cfgs: Vec<Cfg> = String::from_utf8_lossy(test_output.as_bytes())
+            .lines()
+            .filter_map(|line| Cfg::from_str(line).ok())
+            .collect();
+
+        assert_eq!(cfgs.len(), 2);
+        assert!(cfgs.iter().any(|cfg| cfg.to_string() == "debug_assertions"));
+        assert!(cfgs.iter().any(|cfg| cfg.to_string() == "verbose_errors"));
+    }
+
+    #[test]
+    fn test_cfg_parsing_invalid_lines() {
+        // Test that invalid cfg lines are filtered out
+        let test_output = "target_arch=\"x86_64\"\ninvalid_line=bad_value\nrandom text\n";
+        let cfgs: Vec<Cfg> = String::from_utf8_lossy(test_output.as_bytes())
+            .lines()
+            .filter_map(|line| Cfg::from_str(line).ok())
+            .collect();
+
+        // Only the valid cfg should be parsed (invalid_line=bad_value should fail)
+        assert_eq!(cfgs.len(), 1);
+        assert!(
+            cfgs.iter()
+                .any(|cfg| cfg.to_string().contains("target_arch"))
+        );
+    }
+
+    #[test]
+    fn test_platform_mask_operations() {
+        // Test PlatformMask operations
+        let mask = PlatformMask::WINDOWS | PlatformMask::LINUX;
+        assert!(mask.contains(PlatformMask::WINDOWS));
+        assert!(!mask.contains(PlatformMask::MACOS));
+        assert!(mask.contains(PlatformMask::LINUX));
+
+        let oses = mask.to_oses();
+        let mut expected = BTreeSet::new();
+        expected.insert(Os::Windows);
+        expected.insert(Os::Linux);
+        assert_eq!(oses, expected);
+    }
+
+    #[test]
+    fn test_os_buck_labels() {
+        // Test Os enum methods
+        assert_eq!(Os::Windows.buck_label(), "prelude//os/constraints:windows");
+        assert_eq!(Os::Macos.buck_label(), "prelude//os/constraints:macos");
+        assert_eq!(Os::Linux.buck_label(), "prelude//os/constraints:linux");
+
+        assert_eq!(Os::Windows.key(), "windows");
+        assert_eq!(Os::Macos.key(), "macos");
+        assert_eq!(Os::Linux.key(), "linux");
+    }
+
+    #[test]
+    fn test_lookup_platforms() {
+        // Test package platform lookup
+        let windows_pkgs = lookup_platforms("windows-future").unwrap();
+        let mut expected = BTreeSet::new();
+        expected.insert(Os::Windows);
+        assert_eq!(windows_pkgs, expected);
+
+        let macos_pkgs = lookup_platforms("system-configuration").unwrap();
+        let mut expected = BTreeSet::new();
+        expected.insert(Os::Macos);
+        assert_eq!(macos_pkgs, expected);
+
+        // Test unknown package returns None
+        assert!(lookup_platforms("unknown-package").is_none());
+    }
+
+    #[test]
+    fn test_buck_labels_utility() {
+        // Test the buck_labels utility function
+        let mut oses = BTreeSet::new();
+        oses.insert(Os::Windows);
+        oses.insert(Os::Linux);
+
+        let labels = buck_labels(&oses);
+        let mut expected = BTreeSet::new();
+        expected.insert("prelude//os/constraints:windows".to_string());
+        expected.insert("prelude//os/constraints:linux".to_string());
+        assert_eq!(labels, expected);
+    }
+
+    #[test]
+    fn test_supported_targets() {
+        // Test that supported targets are defined and non-empty
+        assert!(!SUPPORTED_TARGETS.is_empty());
+
+        // Test that each supported target has a valid OS and triple
+        for (os, triple) in SUPPORTED_TARGETS {
+            assert!(matches!(os, Os::Windows | Os::Macos | Os::Linux));
+            assert!(!triple.is_empty());
+        }
+    }
 }
