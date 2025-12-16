@@ -954,7 +954,6 @@ impl BuckalChange {
                         // Patch BUCK Rules
                         let buck_path = vendor_dir.join("BUCK");
                         if buck_path.exists() {
-                            // buckal_warn!("test: buck_path exits: {}", buck_path);
                             // Skip merging manual changes if `--no-merge` is set
                             if !ctx.no_merge && !ctx.repo_config.patch_fields.is_empty() {
                                 let existing_rules = parse_buck_file(&buck_path)
@@ -966,7 +965,6 @@ impl BuckalChange {
                                 );
                             }
                         } else {
-                            // buckal_warn!("test: buck_path not exit: {}", buck_path);
                             std::fs::File::create(&buck_path).expect("Failed to create BUCK file");
                         }
 
