@@ -8,6 +8,13 @@ use crate::utils::{UnwrapOrExit, get_cache_path};
 
 // type Fingerprint = [u8; 32];
 
+/// CACHE_VERSION is incremented whenever the cache format or logic changes in a way that is not backward-compatible.
+///
+/// Version 2: Added multi-platform support to the cache format, which is not compatible with version 1 caches.
+///            This change requires invalidating and rebuilding any existing cache from version 1.
+///
+/// Migration strategy: There is no automatic migration; if a cache version mismatch is detected, the old cache is ignored and a new cache is created.
+/// This ensures correctness at the cost of recomputation.
 const CACHE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

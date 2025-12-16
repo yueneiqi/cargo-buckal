@@ -379,34 +379,38 @@ where
     dst.extend(to_add);
 }
 
-fn patch_deps_fields(
-    patch_fields: &Set<String>,
-    deps: &mut Set<String>,
-    os_deps: &mut Map<String, Set<String>>,
-    named_deps: &mut Map<String, String>,
-    os_named_deps: &mut Map<String, Map<String, String>>,
-    other_deps: &Set<String>,
-    other_os_deps: &Map<String, Set<String>>,
-    other_named_deps: &Map<String, String>,
-    other_os_named_deps: &Map<String, Map<String, String>>,
-) {
+struct DepFieldsMut<'a> {
+    deps: &'a mut Set<String>,
+    os_deps: &'a mut Map<String, Set<String>>,
+    named_deps: &'a mut Map<String, String>,
+    os_named_deps: &'a mut Map<String, Map<String, String>>,
+}
+
+struct DepFieldsRef<'a> {
+    deps: &'a Set<String>,
+    os_deps: &'a Map<String, Set<String>>,
+    named_deps: &'a Map<String, String>,
+    os_named_deps: &'a Map<String, Map<String, String>>,
+}
+
+fn patch_deps_fields(patch_fields: &Set<String>, dst: &mut DepFieldsMut, src: &DepFieldsRef) {
     if patch_fields.contains("deps") {
-        patch_set(deps, other_deps);
+        patch_set(dst.deps, src.deps);
     }
 
     if patch_fields.contains("os_deps") {
-        for (plat, deps) in other_os_deps {
-            patch_set(os_deps.entry(plat.clone()).or_default(), deps);
+        for (plat, deps) in src.os_deps {
+            patch_set(dst.os_deps.entry(plat.clone()).or_default(), deps);
         }
     }
 
     if patch_fields.contains("named_deps") {
-        patch_map(named_deps, other_named_deps);
+        patch_map(dst.named_deps, src.named_deps);
     }
 
     if patch_fields.contains("os_named_deps") {
-        for (alias, plat_map) in other_os_named_deps {
-            let entry = os_named_deps.entry(alias.clone()).or_default();
+        for (alias, plat_map) in src.os_named_deps {
+            let entry = dst.os_named_deps.entry(alias.clone()).or_default();
             patch_map(entry, plat_map);
         }
     }
@@ -485,17 +489,19 @@ impl RustLibrary {
             patch_set(&mut self.visibility, &other.visibility);
         }
 
-        patch_deps_fields(
-            patch_fields,
-            &mut self.deps,
-            &mut self.os_deps,
-            &mut self.named_deps,
-            &mut self.os_named_deps,
-            &other.deps,
-            &other.os_deps,
-            &other.named_deps,
-            &other.os_named_deps,
-        );
+        let mut dst = DepFieldsMut {
+            deps: &mut self.deps,
+            os_deps: &mut self.os_deps,
+            named_deps: &mut self.named_deps,
+            os_named_deps: &mut self.os_named_deps,
+        };
+        let src = DepFieldsRef {
+            deps: &other.deps,
+            os_deps: &other.os_deps,
+            named_deps: &other.named_deps,
+            os_named_deps: &other.os_named_deps,
+        };
+        patch_deps_fields(patch_fields, &mut dst, &src);
     }
 }
 
@@ -570,17 +576,19 @@ impl RustBinary {
             patch_set(&mut self.visibility, &other.visibility);
         }
 
-        patch_deps_fields(
-            patch_fields,
-            &mut self.deps,
-            &mut self.os_deps,
-            &mut self.named_deps,
-            &mut self.os_named_deps,
-            &other.deps,
-            &other.os_deps,
-            &other.named_deps,
-            &other.os_named_deps,
-        );
+        let mut dst = DepFieldsMut {
+            deps: &mut self.deps,
+            os_deps: &mut self.os_deps,
+            named_deps: &mut self.named_deps,
+            os_named_deps: &mut self.os_named_deps,
+        };
+        let src = DepFieldsRef {
+            deps: &other.deps,
+            os_deps: &other.os_deps,
+            named_deps: &other.named_deps,
+            os_named_deps: &other.os_named_deps,
+        };
+        patch_deps_fields(patch_fields, &mut dst, &src);
     }
 }
 
@@ -655,17 +663,19 @@ impl RustTest {
             patch_set(&mut self.visibility, &other.visibility);
         }
 
-        patch_deps_fields(
-            patch_fields,
-            &mut self.deps,
-            &mut self.os_deps,
-            &mut self.named_deps,
-            &mut self.os_named_deps,
-            &other.deps,
-            &other.os_deps,
-            &other.named_deps,
-            &other.os_named_deps,
-        );
+        let mut dst = DepFieldsMut {
+            deps: &mut self.deps,
+            os_deps: &mut self.os_deps,
+            named_deps: &mut self.named_deps,
+            os_named_deps: &mut self.os_named_deps,
+        };
+        let src = DepFieldsRef {
+            deps: &other.deps,
+            os_deps: &other.os_deps,
+            named_deps: &other.named_deps,
+            os_named_deps: &other.os_named_deps,
+        };
+        patch_deps_fields(patch_fields, &mut dst, &src);
     }
 }
 

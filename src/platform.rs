@@ -80,14 +80,14 @@ static CFG_CACHE: OnceLock<HashMap<&'static str, Vec<Cfg>>> = OnceLock::new();
 /// # Examples
 ///
 /// ```
-/// let cfgs = rustc_cfgs_for_triple("x86_64-unknown-linux-gnu");
+/// let cfgs = get_rustc_cfgs_for_triple("x86_64-unknown-linux-gnu");
 /// if let Some(cfg_values) = cfgs {
 ///     // Use cfg_values for platform matching
 /// } else {
 ///     // Target not available, skip platform matching for this triple
 /// }
 /// ```
-fn rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
+fn get_rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
     match Command::new("rustc")
         .args(["--print=cfg", "--target", triple])
         .output()
@@ -131,7 +131,7 @@ fn cfg_cache() -> &'static HashMap<&'static str, Vec<Cfg>> {
                 .iter()
                 .map(|(_, triple)| {
                     let triple = *triple;
-                    scope.spawn(move || (triple, rustc_cfgs_for_triple(triple)))
+                    scope.spawn(move || (triple, get_rustc_cfgs_for_triple(triple)))
                 })
                 .collect::<Vec<_>>();
 
@@ -140,7 +140,7 @@ fn cfg_cache() -> &'static HashMap<&'static str, Vec<Cfg>> {
                 .map(|handle| {
                     handle
                         .join()
-                        .expect("cfg_cache thread panicked while running rustc")
+                        .expect("Thread panicked while querying rustc cfg values. This may indicate rustc is not properly installed or accessible.")
                 })
                 .collect::<Vec<_>>()
         });
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     fn test_rustc_cfgs_for_triple_with_available_rustc() {
-        let cfgs = rustc_cfgs_for_triple("x86_64-unknown-linux-gnu").expect(
+        let cfgs = get_rustc_cfgs_for_triple("x86_64-unknown-linux-gnu").expect(
             "expected `rustc --print=cfg --target x86_64-unknown-linux-gnu` to succeed (rustc missing or target not installed?)",
         );
         assert!(!cfgs.is_empty(), "rustc cfgs should not be empty");
