@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     collections::{BTreeSet as Set, HashMap},
-    sync::{Mutex, OnceLock},
     vec,
 };
 
@@ -324,7 +323,6 @@ fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> b
 
 fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
     let buck2_root = get_buck2_root().context("failed to get buck2 root")?;
-    let manifest_path = dep_package.manifest_path.clone();
     let manifest_dir = dep_package
         .manifest_path
         .parent()
@@ -355,8 +353,7 @@ fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
         );
     }
 
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let targets: Vec<Value> = serde_json::from_slice(&json_str)
+    let targets: Vec<Value> = serde_json::from_slice(&output.stdout)
         .context("failed to parse buck2 targets JSON output")?;
     let target_item = targets
         .iter()
