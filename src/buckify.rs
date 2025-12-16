@@ -20,7 +20,7 @@ use crate::{
         RustBinary, RustLibrary, RustRule, RustTest, parse_buck_file, patch_buck_rules,
     },
     buck2::Buck2Command,
-    buckal_log, buckal_warn,
+    buckal_log, buckal_warn, buckal_note,
     cache::{BuckalChange, ChangeType},
     context::BuckalContext,
     platform::{Os, buck_labels, lookup_platforms, oses_from_platform},
@@ -538,7 +538,7 @@ fn set_deps(
 
         if !unconditional && platforms.is_empty() {
             if dropped_due_to_unsupported {
-                buckal_warn!(
+                buckal_note!(
                     "Dependency '{}' (package '{}') targets only unsupported platforms and will be omitted.",
                     dep.name,
                     dep_package.name
