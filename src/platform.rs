@@ -34,10 +34,9 @@ impl Os {
     }
 }
 
-/// Tier1 host platforms (plus explicit x86_64-apple-darwin) used for cfg evaluation.
+/// Tier1 host platforms used for cfg evaluation.
 static SUPPORTED_TARGETS: &[(Os, &str)] = &[
     (Os::Macos, "aarch64-apple-darwin"),
-    (Os::Macos, "x86_64-apple-darwin"),
     (Os::Windows, "aarch64-pc-windows-msvc"),
     (Os::Windows, "x86_64-pc-windows-msvc"),
     (Os::Windows, "x86_64-pc-windows-gnu"),
