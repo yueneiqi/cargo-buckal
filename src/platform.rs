@@ -221,11 +221,39 @@ mod tests {
     #[test]
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     fn test_rustc_cfgs_for_triple_with_available_rustc() {
-        // Test with a target that should be available (current host)
         let result = rustc_cfgs_for_triple("x86_64-unknown-linux-gnu");
-        // The function might return Some or None depending on rustc availability
-        // This test mainly ensures the function doesn't panic
-        assert!(result.is_some() || result.is_none());
+        assert!(result.is_some());
+        let cfgs = result.unwrap();
+
+        // Verify essential cfg values for x86_64-unknown-linux-gnu
+        assert!(!cfgs.is_empty(), "cfgs should not be empty");
+
+        // Check for target_arch
+        assert!(cfgs.iter().any(|cfg| cfg.to_string().contains("target_arch=\"x86_64\"")),
+                "should contain target_arch=\"x86_64\": {:?}", cfgs);
+
+        // Check for target_os
+        assert!(cfgs.iter().any(|cfg| cfg.to_string().contains("target_os=\"linux\"")),
+                "should contain target_os=\"linux\": {:?}", cfgs);
+
+        // Check for target_env
+        assert!(cfgs.iter().any(|cfg| cfg.to_string().contains("target_env=\"gnu\"")),
+                "should contain target_env=\"gnu\": {:?}", cfgs);
+
+        // Check for target_family
+        assert!(cfgs.iter().any(|cfg| cfg.to_string().contains("target_family=\"unix\"")),
+                "should contain target_family=\"unix\": {:?}", cfgs);
+
+        // Check for unix flag (boolean cfg)
+        assert!(cfgs.iter().any(|cfg| cfg.to_string() == "unix"),
+                "should contain unix flag: {:?}", cfgs);
+
+        // Check for debug_assertions flag (boolean cfg)
+        assert!(cfgs.iter().any(|cfg| cfg.to_string() == "debug_assertions"),
+                "should contain debug_assertions flag: {:?}", cfgs);
+
+        // Verify minimum number of cfgs (should have at least the essential ones)
+        assert!(cfgs.len() >= 10, "should have at least 10 cfg values, got {}: {:?}", cfgs.len(), cfgs);
     }
 
     #[test]
