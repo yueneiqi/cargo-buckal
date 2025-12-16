@@ -119,6 +119,12 @@ fn rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
 
 fn cfg_cache() -> &'static HashMap<&'static str, Vec<Cfg>> {
     CFG_CACHE.get_or_init(|| {
+        // We spawn one thread per target triple. This is acceptable because:
+        // 1. This initialization runs exactly once per program execution (OnceLock).
+        // 2. The work is I/O-bound (waiting on rustc subprocess execution), not CPU-bound,
+        //    so having more threads than cores improves throughput rather than causing
+        //    contention - threads spend most of their time blocked on I/O.
+        // 3. The bounded number of targets (tier-1 platforms) keeps thread count reasonable.
         let results = std::thread::scope(|scope| {
             let handles = SUPPORTED_TARGETS
                 .iter()
