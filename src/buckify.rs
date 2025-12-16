@@ -4,6 +4,7 @@ use std::{
     sync::{Mutex, OnceLock},
     vec,
 };
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use cargo_metadata::{
@@ -322,122 +323,6 @@ fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> b
     }
 }
 
-static FIRST_PARTY_LABEL_CACHE: OnceLock<Mutex<HashMap<Utf8PathBuf, String>>> = OnceLock::new();
-
-fn first_party_label_cache() -> &'static Mutex<HashMap<Utf8PathBuf, String>> {
-    FIRST_PARTY_LABEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
-    let manifest_path = dep_package.manifest_path.clone();
-    if let Some(cached) = first_party_label_cache()
-        .lock()
-        .expect("first_party_label_cache poisoned")
-        .get(&manifest_path)
-        .cloned()
-    {
-        return Ok(cached);
-    }
-
-    let buck2_root = get_buck2_root().context("failed to get buck2 root")?;
-    let manifest_dir = dep_package
-        .manifest_path
-        .parent()
-        .context("manifest_path should always have a parent directory")?;
-    let relative = manifest_dir.strip_prefix(&buck2_root).with_context(|| {
-        format!(
-            "dependency manifest dir `{}` is not under Buck2 root `{}`",
-            manifest_dir, buck2_root
-        )
-    })?;
-
-    let relative_path = relative.as_str();
-    let target = if relative_path.is_empty() {
-        "//...".to_string()
-    } else {
-        format!("//{relative_path}/...")
-    };
-
-    let output = Buck2Command::targets()
-        .arg(&target)
-        .arg("--json")
-        .output()
-        .with_context(|| format!("failed to execute `buck2 targets {target} --json`"))?;
-    if !output.status.success() {
-        bail!(
-            "buck2 targets failed for `{target}`:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let targets: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .context("failed to parse buck2 targets JSON output")?;
-    let target_item = targets
-        .iter()
-        .find(|t| {
-            t.get("buck.type")
-                .and_then(|k| k.as_str())
-                .is_some_and(|k| k.ends_with("rust_library"))
-        })
-        .with_context(|| {
-            format!(
-                "failed to find `rust_library` target for package `{}` (manifest `{}`) using target pattern `{target}`",
-                dep_package.name, dep_package.manifest_path
-            )
-        })?;
-
-    let buck_package_raw = target_item
-        .get("buck.package")
-        .and_then(|n| n.as_str())
-        .context("buck2 targets output is missing `buck.package`")?;
-    let buck_package = buck_package_raw
-        .strip_prefix("root")
-        .unwrap_or(buck_package_raw);
-
-    let buck_name = target_item
-        .get("name")
-        .and_then(|n| n.as_str())
-        .context("buck2 targets output is missing `name`")?;
-
-    let label = format!("{buck_package}:{buck_name}");
-
-    first_party_label_cache()
-        .lock()
-        .expect("first_party_label_cache poisoned")
-        .insert(manifest_path, label.clone());
-
-    Ok(label)
-}
-
-fn resolve_dep_label(dep: &NodeDep, dep_package: &Package) -> Result<(String, Option<String>)> {
-    let dep_package_name = dep_package.name.to_string();
-    let is_renamed = dep.name != dep_package_name.replace("-", "_");
-    let alias = if is_renamed {
-        Some(dep.name.clone())
-    } else {
-        None
-    };
-
-    if dep_package.source.is_none() {
-        let label = resolve_first_party_label(dep_package).with_context(|| {
-            format!(
-                "failed to resolve first-party label for `{}`",
-                dep_package.name
-            )
-        })?;
-        Ok((label, alias))
-    } else {
-        // third-party dependency
-        Ok((
-            format!(
-                "//{RUST_CRATES_ROOT}/{}/{}:{}",
-                dep_package.name, dep_package.version, dep_package.name
-            ),
-            alias,
-        ))
-    }
-}
-
 fn insert_dep(
     rust_rule: &mut dyn RustRule,
     target: &str,
@@ -507,6 +392,7 @@ fn set_deps(
         let Some(dep_package) = packages_map.get(&dep.pkg) else {
             continue;
         };
+        let dep_package_name = dep_package.name.to_string();
 
         let mut unconditional = false;
         let mut platforms = Set::<Os>::new();
@@ -547,16 +433,90 @@ fn set_deps(
             continue;
         }
 
-        let (target_label, alias) =
-            resolve_dep_label(dep, dep_package).unwrap_or_exit_ctx(format!(
-                "failed to resolve dependency label for '{}' (package '{}')",
-                dep.name, dep_package.name
-            ));
+        if dep_package.source.is_none() {
+            // first-party dependency
+            let buck2_root =
+                get_buck2_root().unwrap_or_exit_ctx("failed to get buck2 root");
+            let manifest_path = PathBuf::from(&dep_package.manifest_path);
+            let manifest_dir = manifest_path.parent().unwrap();
+            let relative = manifest_dir.strip_prefix(&buck2_root).ok();
 
-        if unconditional {
-            insert_dep(rust_rule, &target_label, alias.as_deref(), None);
+            if relative.is_none() {
+                eprintln!("error: Current directory is not inside the Buck2 project root.");
+                return;
+            }
+            let mut relative_path = relative.unwrap().to_string_lossy().into_owned();
+
+            if !relative_path.is_empty() {
+                relative_path += "/";
+            }
+
+            let target = format!("//{relative_path}...");
+
+            match Buck2Command::targets().arg(target).arg("--json").output() {
+                Ok(output) if output.status.success() => {
+                    let json_str = String::from_utf8_lossy(&output.stdout);
+                    let targets: Vec<Value> = serde_json::from_str(&json_str).unwrap();
+                    let target_item = targets
+                        .iter()
+                        .find(|t| {
+                            t.get("buck.type")
+                                .and_then(|k| k.as_str())
+                                .is_some_and(|k| k.ends_with("rust_library"))
+                        })
+                        .expect("Failed to find rust library rule in BUCK file");
+                    let buck_package = target_item
+                        .get("buck.package")
+                        .and_then(|n| n.as_str())
+                        .expect("Failed to get target name")
+                        .strip_prefix("root")
+                        .unwrap();
+                    let buck_name = target_item
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .expect("Failed to get target name");
+
+                    if dep.name != dep_package_name.replace("-", "_") {
+                        // renamed dependency
+                        rust_rule.named_deps_mut().insert(
+                            dep.name.clone(),
+                            format!("{buck_package}:{buck_name}"),
+                        );
+                    } else {
+                        rust_rule
+                            .deps_mut()
+                            .insert(format!("{buck_package}:{buck_name}"));
+                    }
+                }
+                Ok(output) => {
+                    panic!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                Err(e) => {
+                    panic!("Failed to execute buck2 command: {}", e);
+                }
+            }
         } else {
-            insert_dep(rust_rule, &target_label, alias.as_deref(), Some(&platforms));
+            // third-party dependency
+            let use_alias =
+                ctx.repo_config.inherit_workspace_deps && node.id == ctx.root.id;
+
+            let dep_target = if use_alias {
+                // only workspace root direct deps use alias
+                format!("//third-party/rust:{}", dep_package.name)
+            } else {
+                // default: concrete crate target
+                format!(
+                    "//{RUST_CRATES_ROOT}/{}/{}:{}",
+                    dep_package.name, dep_package.version, dep_package.name
+                )
+            };
+
+            if dep.name != dep_package_name.replace("-", "_") {
+                // renamed dependency
+                rust_rule.named_deps_mut().insert(dep.name.clone(), dep_target);
+            } else {
+                rust_rule.deps_mut().insert(dep_target);
+            }
         }
     }
 }
