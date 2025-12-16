@@ -1,5 +1,8 @@
 use std::{
-    collections::BTreeSet, collections::HashMap, process::Command, str::FromStr, sync::OnceLock,
+    collections::{BTreeSet, HashMap},
+    process::Command,
+    str::FromStr,
+    sync::OnceLock,
 };
 
 use bitflags::bitflags;
