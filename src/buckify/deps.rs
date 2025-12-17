@@ -1,0 +1,291 @@
+use std::collections::{BTreeSet as Set, HashMap};
+
+use anyhow::{Context, Result, bail};
+use cargo_metadata::{DependencyKind, Node, NodeDep, Package, PackageId};
+use serde_json::Value;
+
+use crate::{
+    RUST_CRATES_ROOT,
+    buck::{CargoTargetKind, RustRule},
+    buck2::Buck2Command,
+    buckal_note, buckal_warn,
+    context::BuckalContext,
+    platform::{Os, oses_from_platform},
+    utils::get_buck2_root,
+};
+
+pub(super) fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> bool {
+    match target_kind {
+        CargoTargetKind::CustomBuild => dep_kind == DependencyKind::Build,
+        CargoTargetKind::Test => dep_kind == DependencyKind::Development,
+        _ => dep_kind == DependencyKind::Normal,
+    }
+}
+
+fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
+    let buck2_root = get_buck2_root().context("failed to get buck2 root")?;
+    let manifest_dir = dep_package
+        .manifest_path
+        .parent()
+        .context("manifest_path should always have a parent directory")?;
+    let relative = manifest_dir.strip_prefix(&buck2_root).with_context(|| {
+        format!(
+            "dependency manifest dir `{}` is not under Buck2 root `{}`",
+            manifest_dir, buck2_root
+        )
+    })?;
+
+    let relative_path = relative.as_str();
+    let target = if relative_path.is_empty() {
+        "//...".to_string()
+    } else {
+        format!("//{relative_path}/...")
+    };
+
+    let output = Buck2Command::targets()
+        .arg(&target)
+        .arg("--json")
+        .output()
+        .with_context(|| format!("failed to execute `buck2 targets {target} --json`"))?;
+    if !output.status.success() {
+        bail!(
+            "buck2 targets failed for `{target}`:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let targets: Vec<Value> = serde_json::from_slice(&output.stdout)
+        .context("failed to parse buck2 targets JSON output")?;
+    let target_item = targets
+        .iter()
+        .find(|t| {
+            t.get("buck.type")
+                .and_then(|k| k.as_str())
+                .is_some_and(|k| k.ends_with("rust_library"))
+        })
+        .with_context(|| {
+            format!(
+                "failed to find `rust_library` target for package `{}` (manifest `{}`) using target pattern `{target}`",
+                dep_package.name, dep_package.manifest_path
+            )
+        })?;
+
+    let buck_package_raw = target_item
+        .get("buck.package")
+        .and_then(|n| n.as_str())
+        .context("buck2 targets output is missing `buck.package`")?;
+    let buck_package = buck_package_raw
+        .strip_prefix("root")
+        .unwrap_or(buck_package_raw);
+
+    let buck_name = target_item
+        .get("name")
+        .and_then(|n| n.as_str())
+        .context("buck2 targets output is missing `name`")?;
+
+    let label = format!("{buck_package}:{buck_name}");
+    Ok(label)
+}
+
+fn resolve_dep_label(
+    dep: &NodeDep,
+    dep_package: &Package,
+    use_workspace_alias: bool,
+) -> Result<(String, Option<String>)> {
+    let dep_package_name = dep_package.name.to_string();
+    let is_renamed = dep.name != dep_package_name.replace("-", "_");
+    let alias = if is_renamed {
+        Some(dep.name.clone())
+    } else {
+        None
+    };
+
+    if dep_package.source.is_none() {
+        let label = resolve_first_party_label(dep_package).with_context(|| {
+            format!(
+                "failed to resolve first-party label for `{}`",
+                dep_package.name
+            )
+        })?;
+        Ok((label, alias))
+    } else {
+        // third-party dependency
+        Ok((
+            if use_workspace_alias {
+                format!("//third-party/rust:{}", dep_package.name)
+            } else {
+                format!(
+                    "//{RUST_CRATES_ROOT}/{}/{}:{}",
+                    dep_package.name, dep_package.version, dep_package.name
+                )
+            },
+            alias,
+        ))
+    }
+}
+
+/// Insert a dependency label into `rust_rule` in the appropriate attribute.
+///
+/// `target` is the Buck label we want the rule to depend on. If `alias` is `Some`, the
+/// dependency is recorded as a *named* dependency (used for renamed crates); otherwise it is
+/// recorded as an unnamed dependency.
+///
+/// # Platforms
+///
+/// `platforms` controls whether the dependency is unconditional or platform-specific:
+/// - `None` means the dependency applies on all platforms and is inserted into `deps` or
+///   `named_deps`.
+/// - `Some(set)` means the dependency is conditional and is inserted into `os_deps` or
+///   `os_named_deps` for each OS in `set`.
+///
+/// # Conflict handling
+///
+/// - For unconditional named dependencies (`named_deps`), if an alias is encountered more than
+///   once with different targets, we emit a warning and keep the first value.
+/// - For platform-specific named dependencies (`os_named_deps`), an alias may map to only one
+///   target per OS. Conflicting targets for the same `(alias, os)` are treated as an error.
+fn insert_dep(
+    rust_rule: &mut dyn RustRule,
+    target: &str,
+    alias: Option<&str>,
+    platforms: Option<&Set<Os>>,
+) -> Result<()> {
+    if let Some(platforms) = platforms {
+        for os in platforms {
+            let os_key = os.key().to_owned();
+            if let Some(alias) = alias {
+                let entries = rust_rule
+                    .os_named_deps_mut()
+                    .entry(alias.to_owned())
+                    .or_default();
+
+                if let Some(existing) = entries.get(&os_key) {
+                    if existing != target {
+                        bail!(
+                            "os_named_deps alias '{}' had conflicting targets for platform '{}': '{}' vs '{}'",
+                            alias,
+                            os_key,
+                            existing,
+                            target
+                        );
+                    }
+                } else {
+                    entries.insert(os_key.clone(), target.to_owned());
+                }
+            } else {
+                rust_rule
+                    .os_deps_mut()
+                    .entry(os_key)
+                    .or_default()
+                    .insert(target.to_owned());
+            }
+        }
+    } else if let Some(alias) = alias {
+        let entry = rust_rule.named_deps_mut().entry(alias.to_owned());
+        match entry {
+            std::collections::btree_map::Entry::Vacant(v) => {
+                v.insert(target.to_owned());
+            }
+            std::collections::btree_map::Entry::Occupied(o) => {
+                if o.get() != target {
+                    buckal_warn!(
+                        "named_deps alias '{}' had conflicting targets: '{}' vs '{}'",
+                        alias,
+                        o.get(),
+                        target
+                    );
+                }
+            }
+        }
+    } else {
+        rust_rule.deps_mut().insert(target.to_owned());
+    }
+    Ok(())
+}
+
+pub(super) fn set_deps(
+    rust_rule: &mut dyn RustRule,
+    node: &Node,
+    packages_map: &HashMap<PackageId, Package>,
+    kind: CargoTargetKind,
+    ctx: &BuckalContext,
+) -> Result<()> {
+    let use_workspace_alias = ctx.repo_config.inherit_workspace_deps && node.id == ctx.root.id;
+
+    for dep in &node.deps {
+        let Some(dep_package) = packages_map.get(&dep.pkg) else {
+            continue;
+        };
+
+        let mut unconditional = false;
+        let mut platforms = Set::<Os>::new();
+        let mut dropped_due_to_unsupported = false;
+        let mut has_unmapped_platform = false;
+
+        for dk in dep
+            .dep_kinds
+            .iter()
+            .filter(|dk| dep_kind_matches(kind, dk.kind))
+        {
+            match &dk.target {
+                None => unconditional = true,
+                Some(platform) => {
+                    let oses = oses_from_platform(platform);
+                    if oses.is_empty() {
+                        // Only drop unsupported platforms if the flag is set
+                        if ctx.supported_platform_only {
+                            dropped_due_to_unsupported = true;
+                            continue;
+                        }
+                        // If flag is not set, fall back to unconditional (handled below) so we
+                        // don't silently drop dependencies when the platform can't be mapped.
+                        has_unmapped_platform = true;
+                    } else {
+                        platforms.extend(oses);
+                    }
+                }
+            }
+        }
+
+        if !unconditional && platforms.is_empty() {
+            if dropped_due_to_unsupported {
+                buckal_note!(
+                    "Dependency '{}' (package '{}') targets only unsupported platforms and will be omitted.",
+                    dep.name,
+                    dep_package.name
+                );
+                continue;
+            }
+            if has_unmapped_platform {
+                // `dep.name` is the dependency/crate name as referenced by the parent crate (after
+                // Cargo normalization and/or dependency renames), while `dep_package.name` is the
+                // package name from the dependency's manifest. They can differ for renamed deps or
+                // for hyphenated packages (e.g. `foo-bar` -> crate name `foo_bar`).
+                buckal_note!(
+                    "Dependency '{}' (package '{}') targets platform(s) that could not be mapped; treating as unconditional because --supported-platform-only is not set.",
+                    dep.name,
+                    dep_package.name
+                );
+                unconditional = true;
+            }
+            if !unconditional && platforms.is_empty() {
+                continue;
+            }
+        }
+
+        let (target_label, alias) = resolve_dep_label(dep, dep_package, use_workspace_alias)
+            .with_context(|| {
+                format!(
+                    "failed to resolve dependency label for '{}' (package '{}')",
+                    dep.name, dep_package.name
+                )
+            })?;
+
+        if unconditional {
+            insert_dep(rust_rule, &target_label, alias.as_deref(), None)?;
+        } else {
+            insert_dep(rust_rule, &target_label, alias.as_deref(), Some(&platforms))?;
+        }
+    }
+    Ok(())
+}
