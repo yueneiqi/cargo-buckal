@@ -1,5 +1,12 @@
 use std::{borrow::Cow, vec};
 
+use starlark_syntax::codemap::Spanned;
+use starlark_syntax::syntax::ast::{
+    AstNoPayload, ArgumentP, AstExpr, AstLiteral, AstStmt, ExprP, Stmt,
+};
+use starlark_syntax::syntax::module::AstModuleFields;
+use starlark_syntax::syntax::{AstModule, Dialect};
+
 use crate::{RUST_CRATES_ROOT, context::BuckalContext};
 
 #[derive(Default)]
@@ -214,59 +221,93 @@ fn render_windows_rustc_flags_select(flags: &WindowsImportLibFlags) -> String {
     out
 }
 
-fn apply_rustc_flags_patch_to_content(buck_content: &str, bin_name: &str, select_expr: &str) -> String {
-    fn find_rule_end(haystack: &str, start: usize) -> Option<usize> {
-        // Find a closing paren on its own line (column 0), which is how serde_starlark ends rules.
-        // Return the index just after the ')'.
-        let mut search_from = start;
-        while let Some(rel) = haystack[search_from..].find("\n)") {
-            let close_paren = search_from + rel + 1;
-            let next = close_paren + 1;
-            if next == haystack.len() || haystack.as_bytes()[next] == b'\n' {
-                return Some(next);
+fn apply_rustc_flags_patch_to_content(
+    buck_content: &str,
+    bin_name: &str,
+    select_expr: &str,
+) -> String {
+    // Parse the Starlark content into an AST
+    let ast = match AstModule::parse("BUCK", buck_content.to_owned(), &Dialect::Extended) {
+        Ok(ast) => ast,
+        Err(_) => return buck_content.to_owned(),
+    };
+
+    // Find the insertion point by walking the AST
+    let insert_pos = match find_rustc_flags_end_in_rust_binary(ast.statement(), bin_name) {
+        Some(pos) => pos,
+        None => return buck_content.to_owned(),
+    };
+
+    // Insert the select expression at the found position
+    let mut out = String::with_capacity(buck_content.len() + select_expr.len() + 4);
+    out.push_str(&buck_content[..insert_pos]);
+    out.push_str(" + ");
+    out.push_str(select_expr);
+    out.push_str(&buck_content[insert_pos..]);
+    out
+}
+
+/// Walk the AST to find a `rust_binary` call with the given name and return the
+/// byte position just after the closing `]` of its `rustc_flags` list.
+fn find_rustc_flags_end_in_rust_binary(stmt: &AstStmt, target_name: &str) -> Option<usize> {
+    match &stmt.node {
+        Stmt::Statements(stmts) => {
+            for s in stmts {
+                if let Some(pos) = find_rustc_flags_end_in_rust_binary(s, target_name) {
+                    return Some(pos);
+                }
             }
-            search_from = next;
+            None
         }
+        Stmt::Expression(expr) => find_in_expr(expr, target_name),
+        _ => None,
+    }
+}
+
+fn find_in_expr(expr: &AstExpr, target_name: &str) -> Option<usize> {
+    if let ExprP::Call(callee, args) = &expr.node {
+        // Check if this is a call to `rust_binary`
+        if let ExprP::Identifier(ident) = &callee.node
+            && ident.node.ident == "rust_binary"
+        {
+            return find_rustc_flags_in_call(&args.args, target_name);
+        }
+    }
+    None
+}
+
+fn find_rustc_flags_in_call(
+    args: &[Spanned<ArgumentP<AstNoPayload>>],
+    target_name: &str,
+) -> Option<usize> {
+    // First, check if the `name` argument matches
+    let mut name_matches = false;
+    let mut rustc_flags_end: Option<usize> = None;
+
+    for arg in args {
+        if let ArgumentP::Named(name_spanned, value) = &arg.node {
+            let arg_name = &name_spanned.node;
+            if arg_name == "name" {
+                // Check if the value is a string literal matching our target
+                if let ExprP::Literal(AstLiteral::String(s)) = &value.node
+                    && s.node == target_name
+                {
+                    name_matches = true;
+                }
+            } else if arg_name == "rustc_flags" {
+                // Get the end position of the rustc_flags value (should be a list)
+                if let ExprP::List(_) = &value.node {
+                    rustc_flags_end = Some(value.span.end().get() as usize);
+                }
+            }
+        }
+    }
+
+    if name_matches {
+        rustc_flags_end
+    } else {
         None
     }
-
-    let name_marker = format!("    name = \"{bin_name}\",");
-    let rustc_flags_marker = "    rustc_flags = [";
-
-    let mut search_from = 0usize;
-    while let Some(block_start_rel) = buck_content[search_from..].find("rust_binary(\n") {
-        let block_start = search_from + block_start_rel;
-        let Some(block_end) = find_rule_end(buck_content, block_start) else {
-            break;
-        };
-
-        let block = &buck_content[block_start..block_end];
-        if !block.contains(&name_marker) {
-            search_from = block_end;
-            continue;
-        }
-
-        let Some(rustc_flags_rel) = block.find(rustc_flags_marker) else {
-            return buck_content.to_owned();
-        };
-        let rustc_flags_pos = block_start + rustc_flags_rel;
-
-        let after_rustc_flags = rustc_flags_pos + rustc_flags_marker.len();
-        let Some(list_end_rel) = buck_content[after_rustc_flags..block_end].find("\n    ],\n")
-        else {
-            return buck_content.to_owned();
-        };
-        let list_end = after_rustc_flags + list_end_rel + "\n    ]".len();
-
-        let mut out = String::with_capacity(buck_content.len() + select_expr.len() + 64);
-        out.push_str(&buck_content[..list_end]);
-        out.push_str(" + ");
-        out.push_str(select_expr);
-        out.push_str(&buck_content[list_end..]);
-        return out;
-    }
-
-    buck_content.to_owned()
 }
 
 #[cfg(test)]
