@@ -1,8 +1,8 @@
-use std::{borrow::Cow, vec};
+use std::vec;
 
-use starlark_syntax::codemap::Spanned;
+use starlark_syntax::codemap::{Pos, Span, Spanned};
 use starlark_syntax::syntax::ast::{
-    AstNoPayload, ArgumentP, AstExpr, AstLiteral, AstStmt, ExprP, Stmt,
+    ArgumentP, AstExpr, AstLiteral, AstNoPayload, AstStmt, CallArgsP, ExprP, IdentP, Stmt,
 };
 use starlark_syntax::syntax::module::AstModuleFields;
 use starlark_syntax::syntax::{AstModule, Dialect};
@@ -93,132 +93,158 @@ fn render_windows_rustc_flags_select(flags: &WindowsImportLibFlags) -> String {
         return String::new();
     }
 
-    #[derive(Clone, Debug)]
-    enum BuckExpr<'a> {
-        Str(Cow<'a, str>),
-        List {
-            items: Vec<BuckExpr<'a>>,
-            multiline: bool,
-        },
-        Select(Vec<(Cow<'a, str>, BuckExpr<'a>)>),
-    }
-
-    fn write_indent(out: &mut String, spaces: usize) {
-        for _ in 0..spaces {
-            out.push(' ');
-        }
-    }
-
-    fn write_string_literal(out: &mut String, s: &str) {
-        out.push('"');
-        for c in s.chars() {
-            match c {
-                '\\' => out.push_str("\\\\"),
-                '"' => out.push_str("\\\""),
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                '\t' => out.push_str("\\t"),
-                _ => out.push(c),
-            }
-        }
-        out.push('"');
-    }
-
-    impl<'a> BuckExpr<'a> {
-        fn string_list(items: &'a [String]) -> Self {
-            Self::List {
-                items: items
-                    .iter()
-                    .map(|s| Self::Str(Cow::Borrowed(s.as_str())))
-                    .collect(),
-                multiline: true,
-            }
-        }
-
-        fn empty_inline_list() -> Self {
-            Self::List {
-                items: vec![],
-                multiline: false,
-            }
-        }
-
-        fn write_inline(&self, out: &mut String, base_indent: usize) {
-            match self {
-                Self::Str(s) => write_string_literal(out, s),
-                Self::List { items, multiline } => {
-                    if *multiline {
-                        out.push_str("[\n");
-                        for item in items {
-                            write_indent(out, base_indent + 4);
-                            item.write_inline(out, base_indent + 4);
-                            out.push_str(",\n");
-                        }
-                        write_indent(out, base_indent);
-                        out.push(']');
-                        return;
-                    }
-
-                    out.push('[');
-                    for (idx, item) in items.iter().enumerate() {
-                        if idx > 0 {
-                            out.push_str(", ");
-                        }
-                        item.write_inline(out, base_indent);
-                    }
-                    out.push(']');
-                }
-                Self::Select(entries) => {
-                    out.push_str("select({\n");
-                    for (k, v) in entries {
-                        write_indent(out, base_indent + 4);
-                        write_string_literal(out, k);
-                        out.push_str(": ");
-                        v.write_inline(out, base_indent + 4);
-                        out.push_str(",\n");
-                    }
-                    write_indent(out, base_indent);
-                    out.push_str("})");
-                }
-            }
-        }
-    }
-
-    fn msvc_cpu_select(flags: &WindowsImportLibFlags) -> BuckExpr<'_> {
-        BuckExpr::Select(vec![
-            (
-                Cow::Borrowed(CONSTRAINT_CPU_ARM64),
-                BuckExpr::string_list(&flags.msvc_aarch64),
-            ),
-            (
-                Cow::Borrowed(CONSTRAINT_CPU_X86_32),
-                BuckExpr::string_list(&flags.msvc_i686),
-            ),
-            (
-                Cow::Borrowed(SELECT_DEFAULT),
-                BuckExpr::string_list(&flags.msvc_x86_64),
-            ),
-        ])
-    }
-
-    let windows_select = BuckExpr::Select(vec![
-        (
-            Cow::Borrowed(CONSTRAINT_ABI_GNU),
-            BuckExpr::string_list(&flags.gnu),
-        ),
-        (Cow::Borrowed(CONSTRAINT_ABI_MSVC), msvc_cpu_select(flags)),
-        (Cow::Borrowed(SELECT_DEFAULT), msvc_cpu_select(flags)),
+    // Build nested select expressions using starlark_syntax AST
+    let msvc_cpu_select = build_select(&[
+        (CONSTRAINT_CPU_ARM64, build_string_list(&flags.msvc_aarch64)),
+        (CONSTRAINT_CPU_X86_32, build_string_list(&flags.msvc_i686)),
+        (SELECT_DEFAULT, build_string_list(&flags.msvc_x86_64)),
     ]);
 
-    let select_expr = BuckExpr::Select(vec![
-        (Cow::Borrowed(CONSTRAINT_WINDOWS), windows_select),
-        (Cow::Borrowed(SELECT_DEFAULT), BuckExpr::empty_inline_list()),
+    let windows_select = build_select(&[
+        (CONSTRAINT_ABI_GNU, build_string_list(&flags.gnu)),
+        (CONSTRAINT_ABI_MSVC, msvc_cpu_select.clone()),
+        (SELECT_DEFAULT, msvc_cpu_select),
     ]);
 
+    let select_expr = build_select(&[
+        (CONSTRAINT_WINDOWS, windows_select),
+        (SELECT_DEFAULT, build_empty_list()),
+    ]);
+
+    // Pretty-print the AST with proper indentation
     let mut out = String::new();
-    // The expression is appended inline after `] +`, but we want the body to be indented as if it
-    // started at the `rustc_flags` attribute's indentation level (4 spaces).
-    select_expr.write_inline(&mut out, 4);
+    pretty_print_expr(&select_expr, &mut out, 4);
     out
+}
+
+/// Create a dummy span for AST nodes (required by starlark_syntax but not used for our purpose)
+fn dummy_span() -> Span {
+    Span::new(Pos::new(0), Pos::new(0))
+}
+
+/// Wrap a value in a Spanned with a dummy span
+fn spanned<T>(node: T) -> Spanned<T> {
+    Spanned {
+        span: dummy_span(),
+        node,
+    }
+}
+
+/// Build a string literal AST node
+fn build_string_literal(s: &str) -> AstExpr {
+    spanned(ExprP::Literal(AstLiteral::String(spanned(s.to_owned()))))
+}
+
+/// Build a list of string literals
+fn build_string_list(items: &[String]) -> AstExpr {
+    let list_items: Vec<AstExpr> = items.iter().map(|s| build_string_literal(s)).collect();
+    spanned(ExprP::List(list_items))
+}
+
+/// Build an empty list
+fn build_empty_list() -> AstExpr {
+    spanned(ExprP::List(vec![]))
+}
+
+/// Build a select() call with a dictionary argument
+fn build_select(entries: &[(&str, AstExpr)]) -> AstExpr {
+    let dict_entries: Vec<(AstExpr, AstExpr)> = entries
+        .iter()
+        .map(|(k, v)| (build_string_literal(k), v.clone()))
+        .collect();
+
+    let dict_expr = spanned(ExprP::Dict(dict_entries));
+
+    let select_ident = spanned(ExprP::Identifier(spanned(IdentP {
+        ident: "select".to_owned(),
+        payload: (),
+    })));
+
+    let args = CallArgsP {
+        args: vec![spanned(ArgumentP::Positional(dict_expr))],
+    };
+
+    spanned(ExprP::Call(Box::new(select_ident), args))
+}
+
+/// Pretty-print an AST expression with proper indentation
+fn pretty_print_expr(expr: &AstExpr, out: &mut String, indent: usize) {
+    match &expr.node {
+        ExprP::Literal(AstLiteral::String(s)) => {
+            write_string_literal(out, &s.node);
+        }
+        ExprP::List(items) => {
+            if items.is_empty() {
+                out.push_str("[]");
+            } else {
+                out.push_str("[\n");
+                for item in items {
+                    write_indent(out, indent + 4);
+                    pretty_print_expr(item, out, indent + 4);
+                    out.push_str(",\n");
+                }
+                write_indent(out, indent);
+                out.push(']');
+            }
+        }
+        ExprP::Call(callee, args) => {
+            // Handle select() calls specially
+            if let ExprP::Identifier(ident) = &callee.node
+                && ident.node.ident == "select"
+            {
+                out.push_str("select(");
+                if let Some(arg) = args.args.first()
+                    && let ArgumentP::Positional(dict_expr) = &arg.node
+                {
+                    pretty_print_dict(dict_expr, out, indent);
+                }
+                out.push(')');
+                return;
+            }
+            // Generic call handling (not used in our case)
+            out.push_str(&format!("{}", expr.node));
+        }
+        _ => {
+            out.push_str(&format!("{}", expr.node));
+        }
+    }
+}
+
+/// Pretty-print a dictionary expression
+fn pretty_print_dict(expr: &AstExpr, out: &mut String, indent: usize) {
+    if let ExprP::Dict(entries) = &expr.node {
+        out.push_str("{\n");
+        for (key, value) in entries {
+            write_indent(out, indent + 4);
+            pretty_print_expr(key, out, indent + 4);
+            out.push_str(": ");
+            pretty_print_expr(value, out, indent + 4);
+            out.push_str(",\n");
+        }
+        write_indent(out, indent);
+        out.push('}');
+    }
+}
+
+fn write_indent(out: &mut String, spaces: usize) {
+    for _ in 0..spaces {
+        out.push(' ');
+    }
+}
+
+fn write_string_literal(out: &mut String, s: &str) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
 }
 
 fn apply_rustc_flags_patch_to_content(
@@ -303,11 +329,7 @@ fn find_rustc_flags_in_call(
         }
     }
 
-    if name_matches {
-        rustc_flags_end
-    } else {
-        None
-    }
+    if name_matches { rustc_flags_end } else { None }
 }
 
 #[cfg(test)]
