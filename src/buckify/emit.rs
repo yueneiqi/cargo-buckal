@@ -166,7 +166,7 @@ pub(super) fn emit_rust_test(
                 .src_path
                 .to_owned()
                 .strip_prefix(manifest_dir)
-                .expect("Failed to get binary source path")
+                .expect("Failed to get test source path")
                 .as_str()
         )
     );
@@ -214,13 +214,14 @@ pub(super) fn emit_buildscript_build(
     // Set the crate root path for the build script
     buildscript_build.crate_root = format!(
         "vendor/{}",
-        build_target
-            .src_path
-            .to_owned()
-            .strip_prefix(manifest_dir)
-            .expect("Failed to get library source path")
-            .as_str()
-            .replace('\\', "/")
+        normalize_path_for_buck(
+            build_target
+                .src_path
+                .to_owned()
+                .strip_prefix(manifest_dir)
+                .expect("Failed to get build script source path")
+                .as_str()
+        )
     );
 
     // Set dependencies for the build script
@@ -356,7 +357,7 @@ pub(super) fn emit_filegroup(package: &Package) -> FileGroup {
     }
 }
 
-// Emit `cargo_manifest` rule for the given package
+/// Emit `cargo_manifest` rule for the given package
 pub(super) fn emit_cargo_manifest(package: &Package) -> CargoManifest {
     CargoManifest {
         name: format!("{}-manifest", package.name),

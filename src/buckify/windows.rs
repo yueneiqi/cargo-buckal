@@ -33,7 +33,7 @@ pub(super) fn patch_root_windows_rustc_flags(
     }
 
     for bin_name in bin_names {
-        buck_content = patch_rust_binary_rustc_flags(&buck_content, &bin_name, &select_expr);
+        buck_content = apply_rustc_flags_patch_to_content(&buck_content, &bin_name, &select_expr);
     }
 
     buck_content
@@ -214,7 +214,7 @@ fn render_windows_rustc_flags_select(flags: &WindowsImportLibFlags) -> String {
     out
 }
 
-fn patch_rust_binary_rustc_flags(buck_content: &str, bin_name: &str, select_expr: &str) -> String {
+fn apply_rustc_flags_patch_to_content(buck_content: &str, bin_name: &str, select_expr: &str) -> String {
     fn find_rule_end(haystack: &str, start: usize) -> Option<usize> {
         // Find a closing paren on its own line (column 0), which is how serde_starlark ends rules.
         // Return the index just after the ')'.
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn patch_rust_binary_rustc_flags_patches_named_binary_only() {
+    fn apply_rustc_flags_patch_to_content_patches_named_binary_only() {
         let input = indoc! {r#"
             rust_library(
                 name = "bin",
@@ -362,12 +362,12 @@ mod tests {
             )
             "#};
 
-        let patched = patch_rust_binary_rustc_flags(input, "bin", "select({\"DEFAULT\": []})");
+        let patched = apply_rustc_flags_patch_to_content(input, "bin", "select({\"DEFAULT\": []})");
         assert_eq!(patched, expected);
     }
 
     #[test]
-    fn patch_rust_binary_rustc_flags_does_not_touch_other_binaries() {
+    fn apply_rustc_flags_patch_to_content_does_not_touch_other_binaries() {
         let input = indoc! {r#"
             rust_binary(
                 name = "a",
@@ -400,7 +400,7 @@ mod tests {
             )
             "#};
 
-        let patched = patch_rust_binary_rustc_flags(input, "b", "select({\"DEFAULT\": []})");
+        let patched = apply_rustc_flags_patch_to_content(input, "b", "select({\"DEFAULT\": []})");
         assert_eq!(patched, expected);
     }
 }
