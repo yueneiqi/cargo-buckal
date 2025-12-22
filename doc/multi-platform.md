@@ -33,16 +33,16 @@ If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal trea
 2. Build with a target platform:
 
    ```bash
-   buck2 build //... --target-platforms buckal//config/platforms:x86_64-pc-windows-msvc
+   buck2 build //... --target-platforms buckal//platforms:x86_64-pc-windows-msvc
    ```
 
-   `cargo buckal migrate --buck2` configures a `buckal` cell (Buckal bundles). The bundles provide sample platforms under `buckal//config/platforms:*`. You can also use your own platform definitions; any platform you use must include the appropriate OS constraint value (`prelude//os/constraints:windows` in the example above) so `select()` picks up the right `os_deps` branch.
+   `cargo buckal migrate --buck2` configures a `buckal` cell (Buckal bundles). The bundles provide sample platforms under `buckal//platforms:*`. You can also use your own platform definitions; any platform you use must include the appropriate OS constraint value (`prelude//os/constraints:windows` in the example above) so `select()` picks up the right `os_deps` branch.
 
    If you want to use the bundled toolchain config too, point the `toolchains` cell at it in `.buckconfig`:
 
    ```ini
    [cells]
-     toolchains = buckal/config/toolchains
+     toolchains = buckal/toolchains
    ```
 
 3. Validate multi-platform builds by building against multiple target platforms:
@@ -50,24 +50,24 @@ If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal trea
    Linux:
 
    ```bash
-   buck2 build //... --target-platforms buckal//config/platforms:x86_64-unknown-linux-gnu
-   buck2 build //... --target-platforms buckal//config/platforms:i686-unknown-linux-gnu
-   buck2 build //... --target-platforms buckal//config/platforms:aarch64-unknown-linux-gnu
+   buck2 build //... --target-platforms buckal//platforms:x86_64-unknown-linux-gnu
+   buck2 build //... --target-platforms buckal//platforms:i686-unknown-linux-gnu
+   buck2 build //... --target-platforms buckal//platforms:aarch64-unknown-linux-gnu
    ```
 
    Windows:
 
    ```bash
-   buck2 build //... --target-platforms buckal//config/platforms:x86_64-pc-windows-msvc
-   buck2 build //... --target-platforms buckal//config/platforms:i686-pc-windows-msvc
-   buck2 build //... --target-platforms buckal//config/platforms:aarch64-pc-windows-msvc
-   buck2 build //... --target-platforms buckal//config/platforms:x86_64-pc-windows-gnu
+   buck2 build //... --target-platforms buckal//platforms:x86_64-pc-windows-msvc
+   buck2 build //... --target-platforms buckal//platforms:i686-pc-windows-msvc
+   buck2 build //... --target-platforms buckal//platforms:aarch64-pc-windows-msvc
+   buck2 build //... --target-platforms buckal//platforms:x86_64-pc-windows-gnu
    ```
 
    macOS (bundled sample platforms):
 
    ```bash
-   buck2 build //... --target-platforms buckal//config/platforms:aarch64-apple-darwin
+   buck2 build //... --target-platforms buckal//platforms:aarch64-apple-darwin
    ```
 
 ## Troubleshooting
