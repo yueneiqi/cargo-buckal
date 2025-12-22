@@ -267,21 +267,55 @@ pub fn vendor_package(package: &Package) -> Utf8PathBuf {
 }
 
 pub fn gen_buck_content(rules: &[Rule]) -> String {
-    let loads: Vec<Rule> = vec![
-        Rule::Load(Load {
+    // Analyze which rule types are present to build conditional load statements
+    let mut has_cargo_manifest = false;
+    let mut has_rust_library = false;
+    let mut has_rust_binary = false;
+    let mut has_rust_test = false;
+    let mut has_buildscript_run = false;
+
+    for rule in rules {
+        match rule {
+            Rule::CargoManifest(_) => has_cargo_manifest = true,
+            Rule::RustLibrary(_) => has_rust_library = true,
+            Rule::RustBinary(_) => has_rust_binary = true,
+            Rule::RustTest(_) => has_rust_test = true,
+            Rule::BuildscriptRun(_) => has_buildscript_run = true,
+            _ => {}
+        }
+    }
+
+    // Build load statements based on which rule types are present
+    let mut loads: Vec<Rule> = vec![];
+
+    if has_cargo_manifest {
+        loads.push(Rule::Load(Load {
             bzl: "@buckal//:cargo_manifest.bzl".to_owned(),
             items: Set::from(["cargo_manifest".to_owned()]),
-        }),
-        Rule::Load(Load {
+        }));
+    }
+
+    // Build wrapper.bzl load items based on which rust rules are present
+    let mut wrapper_items: Set<String> = Set::new();
+    if has_rust_library {
+        wrapper_items.insert("rust_library".to_owned());
+    }
+    if has_rust_binary {
+        wrapper_items.insert("rust_binary".to_owned());
+    }
+    if has_rust_test {
+        wrapper_items.insert("rust_test".to_owned());
+    }
+    if has_buildscript_run {
+        wrapper_items.insert("buildscript_run".to_owned());
+    }
+
+    if !wrapper_items.is_empty() {
+        loads.push(Rule::Load(Load {
             bzl: "@buckal//:wrapper.bzl".to_owned(),
-            items: Set::from([
-                "buildscript_run".to_owned(),
-                "rust_binary".to_owned(),
-                "rust_library".to_owned(),
-                "rust_test".to_owned(),
-            ]),
-        }),
-    ];
+            items: wrapper_items,
+        }));
+    }
 
     let loads_string = loads
         .iter()
