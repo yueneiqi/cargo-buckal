@@ -233,6 +233,25 @@ pub fn init_modifier(dest: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+pub fn init_toolchains_buck(dest: &std::path::Path) -> Result<()> {
+    let toolchains_dir = dest.join("toolchains");
+    std::fs::create_dir_all(&toolchains_dir)?;
+    let mut buck_file = std::fs::File::create(toolchains_dir.join("BUCK"))?;
+
+    writeln!(
+        buck_file,
+        "{}",
+        r#"load("@buckal//toolchains:demo.bzl", "system_demo_toolchains")
+
+# All the default toolchains, suitable for a quick demo or early prototyping.
+# Most real projects should copy/paste the implementation to configure them.
+system_demo_toolchains()
+"#
+        .trim()
+    )?;
+    Ok(())
+}
+
 pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
     let mut buckconfig = BuckConfig::load(&dest.join(".buckconfig"))?;
     buckconfig.upsert_kv("cells", "buckal", "buckal");
