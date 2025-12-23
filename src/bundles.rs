@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::result::Result::Ok;
 
 use anyhow::Result;
+use ini::Ini;
 use reqwest::blocking::Client;
 use reqwest::header::USER_AGENT;
 use serde::Deserialize;
@@ -12,10 +12,25 @@ use crate::{buckal_log, buckal_warn, user_agent};
 type Section = String;
 type Lines = Vec<String>;
 
-#[derive(Default)]
+// TODO: too complicated, try to simplify this
 struct BuckConfig {
     section_order: Vec<Section>,
-    sections: HashMap<Section, Lines>,
+    raw_sections: HashMap<Section, Lines>,
+    raw_section_names: HashSet<Section>,
+    touched_sections: HashSet<Section>,
+    ini: Ini,
+}
+
+impl Default for BuckConfig {
+    fn default() -> Self {
+        Self {
+            section_order: Vec::new(),
+            raw_sections: HashMap::new(),
+            raw_section_names: HashSet::new(),
+            touched_sections: HashSet::new(),
+            ini: Ini::new(),
+        }
+    }
 }
 
 impl BuckConfig {
@@ -29,52 +44,101 @@ impl BuckConfig {
         Ok(())
     }
 
-    pub fn get_section_mut(&mut self, section: &str) -> &mut Lines {
-        self.sections.entry(section.to_string()).or_default()
+    pub fn upsert_kv(&mut self, section: &str, key: &str, value: &str) {
+        self.ensure_section(section);
+        self.touched_sections.insert(section.to_string());
+        self.raw_section_names.remove(section);
+        self.ini
+            .with_section(Some(section.to_string()))
+            .set(key.to_string(), value.to_string());
     }
 
-    fn new_section_after(&mut self, after_section: &str, new_section_name: String) -> &mut Lines {
-        self.sections.insert(new_section_name.clone(), Vec::new());
+    pub fn clear_section(&mut self, section: &str) {
+        self.touched_sections.insert(section.to_string());
+        self.raw_section_names.remove(section);
+        self.raw_sections.insert(section.to_string(), Vec::new());
+        self.ini.delete(Some(section.to_string()));
+    }
 
-        if let Some(pos) = self.section_order.iter().position(|s| s == after_section) {
-            self.section_order
-                .insert(pos + 1, new_section_name.to_owned());
-        } else {
-            self.section_order.push(new_section_name.to_owned());
+    pub fn ensure_section(&mut self, section: &str) {
+        if !self.section_order.iter().any(|s| s == section) {
+            self.section_order.push(section.to_string());
         }
-
-        self.sections.entry(new_section_name).or_default()
+        self.raw_sections.entry(section.to_string()).or_default();
     }
 
-    fn new_section(&mut self, new_section_name: String) -> &mut Lines {
-        self.sections.insert(new_section_name.clone(), Vec::new());
-        self.section_order.push(new_section_name.to_owned());
+    pub fn ensure_section_after(&mut self, after_section: &str, section: &str) {
+        if self.section_order.iter().any(|s| s == section) {
+            return;
+        }
+        if let Some(pos) = self.section_order.iter().position(|s| s == after_section) {
+            self.section_order.insert(pos + 1, section.to_string());
+        } else {
+            self.section_order.push(section.to_string());
+        }
+        self.raw_sections.entry(section.to_string()).or_default();
+    }
 
-        self.sections.entry(new_section_name).or_default()
+    /// Append a key-value pair at the end of a section's raw lines (preserves insertion order).
+    /// This keeps the section in "raw" mode (not touched by ini).
+    pub fn append_kv(&mut self, section: &str, key: &str, value: &str) {
+        self.ensure_section(section);
+        let line = format!("  {} = {}", key, value);
+        self.raw_sections
+            .entry(section.to_string())
+            .or_default()
+            .push(line);
+        // Also update ini for consistency
+        self.ini
+            .with_section(Some(section.to_string()))
+            .set(key.to_string(), value.to_string());
+    }
+
+    /// Insert a comment line before a specific key in a section.
+    /// The comment should not include the leading `# ` - it will be added automatically.
+    /// The comment will use the same indentation as the key line.
+    pub fn insert_comment_before_key(&mut self, section: &str, key: &str, comment: &str) {
+        if let Some(lines) = self.raw_sections.get_mut(section) {
+            let key_pattern = format!("{} = ", key);
+            if let Some(pos) = lines.iter().position(|line| line.trim_start().starts_with(&key_pattern)) {
+                let indent = lines[pos].len() - lines[pos].trim_start().len();
+                let indent_str = &lines[pos][..indent];
+                lines.insert(pos, format!("{}# {}", indent_str, comment));
+            }
+        }
     }
 
     fn parse(contents: String) -> BuckConfig {
-        let lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
-
-        let mut config = BuckConfig::default();
+        let ini = Ini::load_from_str(&contents).unwrap_or_else(|_| Ini::new());
+        let mut config = BuckConfig {
+            ini,
+            ..Default::default()
+        };
         let mut current_section: Option<String> = None;
 
-        for line in lines {
+        for line in contents.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 let section_name = trimmed[1..trimmed.len() - 1].to_string();
                 config.section_order.push(section_name.clone());
-                current_section = Some(section_name);
-            } else if trimmed.starts_with('#') {
-                continue;
-            } else if !line.is_empty()
-                && let Some(section) = &current_section
-            {
                 config
-                    .sections
+                    .raw_sections
+                    .entry(section_name.clone())
+                    .or_default();
+                current_section = Some(section_name);
+            } else if let Some(section) = &current_section {
+                if !trimmed.is_empty()
+                    && !trimmed.starts_with('#')
+                    && !trimmed.starts_with(';')
+                    && !trimmed.contains('=')
+                {
+                    config.raw_section_names.insert(section.clone());
+                }
+                config
+                    .raw_sections
                     .entry(section.clone())
                     .or_default()
-                    .push(line);
+                    .push(line.to_string());
             }
         }
         config
@@ -87,15 +151,44 @@ impl BuckConfig {
             output.push('[');
             output.push_str(section);
             output.push_str("]\n");
-            if let Some(lines) = self.sections.get(section) {
-                for line in lines {
-                    output.push_str(line);
+            let ini_section = self.ini.section(Some(section.as_str()));
+            let use_raw = !self.touched_sections.contains(section);
+            if use_raw {
+                if let Some(lines) = self.raw_sections.get(section) {
+                    for line in lines {
+                        output.push_str(line);
+                        output.push('\n');
+                    }
+                    let last_non_empty = lines.iter().rev().find(|line| !line.trim().is_empty());
+                    let ends_with_comment = last_non_empty
+                        .map_or(false, |line| {
+                            let trimmed = line.trim();
+                            trimmed.starts_with('#') || trimmed.starts_with(';')
+                        });
+                    let last_blank = lines.last().map_or(false, |line| line.trim().is_empty());
+                    if !last_blank && !ends_with_comment {
+                        output.push('\n');
+                    }
+                }
+            } else if let Some(lines) = ini_section {
+                let mut items: Vec<(String, String)> = lines
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect();
+                items.sort_by(|(left, _), (right, _)| left.cmp(right));
+                for (key, value) in items {
+                    output.push_str("  ");
+                    output.push_str(&key);
+                    output.push_str(" = ");
+                    output.push_str(&value);
                     output.push('\n');
                 }
                 output.push('\n');
             }
         }
-        output.pop();
+        while output.ends_with('\n') {
+            output.pop();
+        }
 
         output
     }
@@ -142,16 +235,16 @@ pub fn init_modifier(dest: &std::path::Path) -> Result<()> {
 
 pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
     let mut buckconfig = BuckConfig::load(&dest.join(".buckconfig"))?;
-    let cells = buckconfig.get_section_mut("cells");
-    upsert_kv_line(cells, "buckal", "buckal");
-    let external_cells = buckconfig.get_section_mut("external_cells");
-    upsert_kv_line(external_cells, "buckal", "git");
-    let buckal_section =
-        buckconfig.new_section_after("external_cells", "external_cell_buckal".to_owned());
-    buckal_section.push(format!(
-        "  git_origin = https://github.com/{}",
-        crate::BUCKAL_BUNDLES_REPO
-    ));
+    buckconfig.upsert_kv("cells", "buckal", "buckal");
+    buckconfig.append_kv("external_cells", "buckal", "git");
+    buckconfig.insert_comment_before_key("external_cells", "buckal", "Added by cargo-buckal. See [external_cell_buckal] for git configuration.");
+    buckconfig.ensure_section_after("external_cells", "external_cell_buckal");
+    buckconfig.clear_section("external_cell_buckal");
+    buckconfig.upsert_kv(
+        "external_cell_buckal",
+        "git_origin",
+        &format!("https://github.com/{}", crate::BUCKAL_BUNDLES_REPO),
+    );
     let commit_hash = match fetch() {
         Ok(hash) => hash,
         Err(e) => {
@@ -162,35 +255,24 @@ pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
             crate::DEFAULT_BUNDLE_HASH.to_string()
         }
     };
-    buckal_section.push(format!("  commit_hash = {}", commit_hash));
-    let project = buckconfig.new_section("project".to_owned());
-    project.push("  ignore = .git .buckal buck-out target".to_owned());
+    buckconfig.upsert_kv("external_cell_buckal", "commit_hash", &commit_hash);
+    buckconfig.ensure_section("project");
+    buckconfig.clear_section("project");
+    buckconfig.upsert_kv("project", "ignore", ".git .buckal buck-out target");
     buckconfig.save(&dest.join(".buckconfig"))?;
 
     Ok(())
 }
 
-fn upsert_kv_line(lines: &mut Lines, key: &str, value: &str) {
-    let prefix = format!("{key} =");
-    let replacement = format!("  {key} = {value}");
-    if let Some(pos) = lines
-        .iter()
-        .position(|line| line.trim_start().starts_with(&prefix))
-    {
-        lines[pos] = replacement;
-    } else {
-        lines.push(replacement);
-    }
-}
-
 pub fn fetch_buckal_cell(dest: &std::path::Path) -> Result<()> {
     let mut buckconfig = BuckConfig::load(&dest.join(".buckconfig"))?;
-    let buckal_section = buckconfig.get_section_mut("external_cell_buckal");
-    buckal_section.clear();
-    buckal_section.push(format!(
-        "  git_origin = https://github.com/{}",
-        crate::BUCKAL_BUNDLES_REPO
-    ));
+    buckconfig.ensure_section("external_cell_buckal");
+    buckconfig.clear_section("external_cell_buckal");
+    buckconfig.upsert_kv(
+        "external_cell_buckal",
+        "git_origin",
+        &format!("https://github.com/{}", crate::BUCKAL_BUNDLES_REPO),
+    );
     let commit_hash = match fetch() {
         Ok(hash) => hash,
         Err(e) => {
@@ -201,7 +283,7 @@ pub fn fetch_buckal_cell(dest: &std::path::Path) -> Result<()> {
             crate::DEFAULT_BUNDLE_HASH.to_string()
         }
     };
-    buckal_section.push(format!("  commit_hash = {}", commit_hash));
+    buckconfig.upsert_kv("external_cell_buckal", "commit_hash", &commit_hash);
     buckconfig.save(&dest.join(".buckconfig"))?;
 
     Ok(())
@@ -229,4 +311,140 @@ pub fn fetch() -> Result<String> {
         .send()?
         .json()?;
     Ok(response[0].sha.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BuckConfig;
+    use indoc::indoc;
+
+    #[test]
+    fn serialize_preserves_raw_sections_when_untouched() {
+        let contents = indoc! {r#"
+            [cells]
+              root = .
+              prelude = prelude
+
+            [parser]
+              target_platform_detector_spec = target:root//...->prelude//platforms:default \
+                target:prelude//...->prelude//platforms:default
+
+            [external_cells]
+              prelude = bundled
+        "#};
+        let config = BuckConfig::parse(contents.trim_end().to_string());
+        let output = config.serialize();
+        assert_eq!(output, contents.trim_end());
+    }
+
+    #[test]
+    fn serialize_uses_ini_for_touched_sections() {
+        let contents = indoc! {r#"
+            [cells]
+              root = .
+              prelude = prelude
+
+            [parser]
+              target_platform_detector_spec = target:root//...->prelude//platforms:default \
+                target:prelude//...->prelude//platforms:default
+
+            [external_cell_buckal]
+              git_origin = old
+              commit_hash = oldhash
+        "#};
+        let mut config = BuckConfig::parse(contents.trim_end().to_string());
+
+        config.upsert_kv("cells", "buckal", "buckal");
+        config.clear_section("external_cell_buckal");
+        config.upsert_kv("external_cell_buckal", "git_origin", "https://example.com/repo");
+        config.upsert_kv("external_cell_buckal", "commit_hash", "deadbeef");
+
+        let output = config.serialize();
+        let expected = indoc! {r#"
+            [cells]
+              buckal = buckal
+              prelude = prelude
+              root = .
+
+            [parser]
+              target_platform_detector_spec = target:root//...->prelude//platforms:default \
+                target:prelude//...->prelude//platforms:default
+
+            [external_cell_buckal]
+              commit_hash = deadbeef
+              git_origin = https://example.com/repo
+        "#};
+        assert_eq!(output, expected.trim_end());
+    }
+
+    #[test]
+    fn serialize_no_extra_blank_line_after_comment() {
+        let contents = indoc! {r#"
+            [cells]
+              root = .
+              prelude = prelude
+              toolchains = toolchains
+              none = none
+                
+            [cell_aliases]
+              config = prelude
+              ovr_config = prelude
+              fbcode = none
+              fbsource = none
+              fbcode_macros = none
+              buck = none
+                
+            # Uses a copy of the prelude bundled with the buck2 binary. You can alternatively delete this
+            # section and vendor a copy of the prelude to the `prelude` directory of your project.
+            [external_cells]
+              prelude = bundled
+                
+            [parser]
+              target_platform_detector_spec = target:root//...->prelude//platforms:default \
+                target:prelude//...->prelude//platforms:default \
+                target:toolchains//...->prelude//platforms:default
+                
+            [build]
+              execution_platforms = prelude//platforms:default
+        "#};
+        let config = BuckConfig::parse(contents.trim_end().to_string());
+        let output = config.serialize();
+        assert_eq!(output, contents.trim_end());
+    }
+
+    #[test]
+    fn serialize_preserves_blank_lines_between_comment_and_code() {
+        let contents = indoc! {r#"
+            [section_a]
+              key1 = value1
+              key2 = value2
+
+            # This comment has a blank line before the next section
+            
+            [section_b]
+              key3 = value3
+        "#};
+        let config = BuckConfig::parse(contents.trim_end().to_string());
+        let output = config.serialize();
+        assert_eq!(output, contents.trim_end());
+    }
+
+    #[test]
+    fn append_kv_and_comment() {
+        let contents = indoc! {r#"
+            [external_cells]
+              prelude = bundled
+        "#};
+        let mut config = BuckConfig::parse(contents.trim_end().to_string());
+        config.append_kv("external_cells", "buckal", "git");
+        config.insert_comment_before_key("external_cells", "buckal", "buckal cell for cargo-buckal");
+        let output = config.serialize();
+        let expected = indoc! {r#"
+            [external_cells]
+              prelude = bundled
+              # buckal cell for cargo-buckal
+              buckal = git
+        "#};
+        assert_eq!(output, expected.trim_end());
+    }
 }
