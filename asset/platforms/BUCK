@@ -18,7 +18,7 @@ platform(
 execution_platform(
     name = "aarch64-pc-windows-msvc",
     cpu_configuration = "prelude//cpu:arm64",
-    os_configuration = "buckal//platforms:windows-msvc",
+    os_configuration = "//platforms:windows-msvc",
     use_windows_path_separators = True,
     visibility = ["PUBLIC"],
 )

@@ -4,9 +4,11 @@ use clap::Parser;
 
 use crate::{
     RUST_CRATES_ROOT,
+    assets::extract_buck2_assets,
+    buckal_error,
     buck2::Buck2Command,
     buckify::flush_root,
-    bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier, init_toolchains_buck},
+    bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier},
     cache::BuckalCache,
     context::BuckalContext,
     utils::{UnwrapOrExit, check_buck2_package, ensure_prerequisites},
@@ -58,6 +60,14 @@ pub fn execute(args: &MigrateArgs) {
     // Initialize Buck2 project if requested
     // Compared to `cargo buckal init`, here we only setup Buck2 related files
     if args.buck2 {
+        let cwd = std::env::current_dir().unwrap_or_exit();
+        let toolchains_dir = cwd.join("toolchains");
+        let platforms_dir = cwd.join("platforms");
+        if toolchains_dir.is_dir() || platforms_dir.is_dir() {
+            buckal_error!("`toolchains/` or `platforms/` directory already exists. Please delete them first.");
+            std::process::exit(1);
+        }
+
         Buck2Command::init().execute().unwrap_or_exit();
         std::fs::create_dir_all(RUST_CRATES_ROOT)
             .unwrap_or_exit_ctx("failed to create third-party directory");
@@ -69,11 +79,9 @@ pub fn execute(args: &MigrateArgs) {
         writeln!(git_ignore, "/buck-out").unwrap_or_exit();
 
         // Configure the buckal cell in .buckconfig
-        let cwd = std::env::current_dir().unwrap_or_exit();
         init_buckal_cell(&cwd).unwrap_or_exit();
 
-        // Write toolchains/BUCK to use buckal demo toolchains
-        init_toolchains_buck(&cwd).unwrap_or_exit();
+        extract_buck2_assets(&cwd).unwrap_or_exit_ctx("failed to extract buck2 assets");
 
         // Init cfg modifiers
         init_modifier(&cwd).unwrap_or_exit();
