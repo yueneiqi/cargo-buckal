@@ -48,7 +48,7 @@ def system_demo_cxx_toolchain():
             "prelude//os/constraints:windows": select({
                 # MSVC targets: use Rust's bundled lld-link for non-x86_64 targets.
                 # This avoids relying on prelude's `msvc_tools` paths (which currently
-                # assume x64-hosted MSVC bin/lib layouts).
+                # assume x86_64-hosted MSVC bin/lib layouts).
                 "prelude//abi/constraints:msvc": select({
                     "prelude//cpu/constraints:arm64": "toolchains/cxx/tools/lld-link-aarch64.bat",
                     "prelude//cpu/constraints:x86_32": "toolchains/cxx/tools/lld-link-i686.bat",
