@@ -156,10 +156,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
-    # Skip MinGW jobs unless running via workflow dispatch with enable_mingw_jobs=true
-    if: ${{ !(matrix.target == 'x86_64-pc-windows-gnu' && matrix.mingw_variant == 'mingw') || (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_mingw_jobs == 'true') }}
-    # Allow x86_64-pc-windows-gnu with MinGW to fail when they do run
-    continue-on-error: ${{ matrix.target == 'x86_64-pc-windows-gnu' && matrix.mingw_variant == 'mingw' }}
     strategy:
       fail-fast: false
       matrix:
@@ -241,21 +237,6 @@ jobs:
             os: windows-2022
             gen_platform: windows
             mingw_variant: no-mingw
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: linux
-            needs_mingw: true
-            mingw_variant: mingw
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: macos
-            needs_mingw: true
-            mingw_variant: mingw
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: windows
-            needs_mingw: true
-            mingw_variant: mingw
 
           # ========== x86_64-pc-windows-msvc (windows-2022) ==========
           - target: x86_64-pc-windows-msvc
@@ -279,7 +260,7 @@ jobs:
             os: ubuntu-24.04
             gen_platform: windows
 
-    steps:
+    steps: &test_steps
       # ============================================================
       # Windows-specific setup
       # ============================================================
@@ -445,3 +426,32 @@ jobs:
         run: |
           cd fd
           buck2 test //... --target-platforms //platforms:${{ matrix.target }}
+
+  test-mingw:
+    name: ${{ matrix.target }} / ${{ matrix.gen_platform }}-gen (${{ matrix.os }})${{ matrix.mingw_variant && format(' [{0}]', matrix.mingw_variant) || '' }}
+    needs: generate
+    runs-on: ${{ matrix.os }}
+    env:
+      MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.enable_mingw_jobs == 'true' }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-gnu
+            os: windows-2022
+            gen_platform: linux
+            needs_mingw: true
+            mingw_variant: mingw
+          - target: x86_64-pc-windows-gnu
+            os: windows-2022
+            gen_platform: macos
+            needs_mingw: true
+            mingw_variant: mingw
+          - target: x86_64-pc-windows-gnu
+            os: windows-2022
+            gen_platform: windows
+            needs_mingw: true
+            mingw_variant: mingw
+    steps: *test_steps
