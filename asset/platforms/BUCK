@@ -15,6 +15,13 @@ platform(
     visibility = ["PUBLIC"],
 )
 
+# NOTE: This target uses execution_platform() instead of platform() due to
+# cross-compilation requirements on Windows ARM hosts. When building
+# aarch64-pc-windows-msvc on Windows ARM systems, Buck's execution platform
+# resolution requires explicit configuration to properly handle the toolchain
+# selection and execution environment. This is different from other targets
+# which can rely on Buck's default platform resolution. See CI configuration
+# and Buck documentation for execution_platform vs platform usage patterns.
 execution_platform(
     name = "aarch64-pc-windows-msvc",
     cpu_configuration = "prelude//cpu:arm64",
