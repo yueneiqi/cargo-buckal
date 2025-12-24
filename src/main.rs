@@ -1,6 +1,7 @@
 mod buck;
 mod buck2;
 mod buckify;
+mod assets;
 mod bundles;
 mod cache;
 mod cli;
@@ -17,7 +18,7 @@ use clap::Parser;
 pub const RUST_CRATES_ROOT: &str = "third-party/rust/crates";
 pub const BUCKAL_BUNDLES_REPO: &str = "yueneiqi/buckal-bundles";
 // fallback commit hash used when fetching the latest from BUCKAL_BUNDLES_REPO fails
-pub const DEFAULT_BUNDLE_HASH: &str = "6e234d54ad6b62b0b6fa384a9fd0aeb4402e56ff";
+pub const DEFAULT_BUNDLE_HASH: &str = "2868bb43cb3bbb6dfd04204d56251e1a9706b7ee";
 
 pub fn main() {
     let args = cli::Cli::parse();

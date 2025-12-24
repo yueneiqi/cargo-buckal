@@ -10,7 +10,7 @@ use crate::{
     RUST_CRATES_ROOT,
     buck2::Buck2Command,
     buckal_error, buckal_log, buckal_note,
-    bundles::{init_buckal_cell, init_modifier, init_toolchains_buck},
+    bundles::{init_buckal_cell, init_modifier},
     utils::{UnwrapOrExit, ensure_prerequisites},
 };
 
@@ -94,9 +94,6 @@ pub fn execute(args: &NewArgs) {
         let cwd = std::env::current_dir().unwrap_or_exit();
         let repo_path = cwd.join(&args.path);
         init_buckal_cell(&repo_path).unwrap_or_exit();
-
-        // Write toolchains/BUCK to use buckal demo toolchains
-        init_toolchains_buck(&repo_path).unwrap_or_exit();
 
         // Init cfg modifiers
         init_modifier(&repo_path).unwrap_or_exit();
