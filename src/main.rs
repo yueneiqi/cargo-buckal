@@ -18,7 +18,7 @@ use clap::Parser;
 pub const RUST_CRATES_ROOT: &str = "third-party/rust/crates";
 pub const BUCKAL_BUNDLES_REPO: &str = "yueneiqi/buckal-bundles";
 // fallback commit hash used when fetching the latest from BUCKAL_BUNDLES_REPO fails
-pub const DEFAULT_BUNDLE_HASH: &str = "2868bb43cb3bbb6dfd04204d56251e1a9706b7ee";
+pub const DEFAULT_BUNDLE_HASH: &str = "262ec890602b729d94a36af27d7c590f5cd5e1d7";
 
 pub fn main() {
     let args = cli::Cli::parse();
