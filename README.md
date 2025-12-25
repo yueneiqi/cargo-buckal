@@ -27,7 +27,7 @@ Common commands:
 
 `cargo buckal migrate` preserves platform-conditional Cargo dependencies by emitting `os_deps`/`os_named_deps` and canonical OS constraints, so the same generated BUCK files can be built for different target platforms without regenerating on each host.
 
-See [doc/multi-platform.md](doc/multi-platform.md).
+See [docs/multi-platform.md](docs/multi-platform.md).
 
 ## Configuration
 
