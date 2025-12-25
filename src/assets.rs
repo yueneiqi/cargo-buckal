@@ -3,8 +3,8 @@ use std::path::Path;
 
 use include_dir::{Dir, DirEntry, include_dir};
 
-static TOOLCHAINS_ASSET: Dir = include_dir!("$CARGO_MANIFEST_DIR/asset/toolchains");
-static PLATFORMS_ASSET: Dir = include_dir!("$CARGO_MANIFEST_DIR/asset/platforms");
+static TOOLCHAINS_ASSET: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets/toolchains");
+static PLATFORMS_ASSET: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets/platforms");
 
 pub fn extract_buck2_assets(dest: &Path) -> io::Result<()> {
     let toolchains_root = dest.join("toolchains");
