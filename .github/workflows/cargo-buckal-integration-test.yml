@@ -41,10 +41,11 @@ jobs:
           - name: windows
             os: windows-2022
 
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
-
     steps:
+      - name: Set cargo target dir
+        shell: bash
+        run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> "$GITHUB_ENV"
+
       - name: Enable long paths (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -135,7 +136,6 @@ jobs:
     needs: generate
     runs-on: ${{ matrix.os }}
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
     strategy:
       fail-fast: false
@@ -242,6 +242,10 @@ jobs:
             gen_platform: windows
 
     steps:
+      - name: Set cargo target dir
+        shell: bash
+        run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> "$GITHUB_ENV"
+
       # ============================================================
       # Windows-specific setup
       # ============================================================
