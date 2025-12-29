@@ -33,6 +33,7 @@ jobs:
       project_name: git-internal
       clone_url: https://github.com/web3infra-foundation/git-internal.git
       clone_ref: main
+      clean_existing_buck2_and_buckal: true
 
   test:
     needs: generate

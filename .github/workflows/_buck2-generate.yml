@@ -6,7 +6,7 @@
 # 3. Generates Buck2 files for the target project
 # 4. Uploads artifacts for the test phase
 
-name: Reusable Generate
+name: Generate Buck2 Targets
 
 on:
   workflow_call:
@@ -40,6 +40,11 @@ on:
         required: false
         type: string
         default: 'nightly-2025-08-01'
+      clean_existing_buck2_and_buckal:
+        description: 'Clean existing Buck2/Buckal files before generating'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   generate:
@@ -133,13 +138,20 @@ jobs:
           cd cargo-buckal
           cargo install --locked --path .
 
-      # For external projects, initialize Buck2
-      - name: Initialize Buck2
-        if: inputs.clone_url != ''
+      # For external projects, clean up existing Buck2/Buckal files and reinitialize
+      - name: Clean up existing Buck2/Buckal files
+        if: inputs.clean_existing_buck2_and_buckal
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 init --git
+          rm -f buckal.snap .buckconfig .buckroot
+          rm -rf third-party toolchains platforms
+
+      - name: Initialize Buck2
+        shell: bash
+        run: |
+          cd "${{ inputs.project_dir || inputs.project_name }}"
+          buck2 init
 
       - name: Generate Buck2 files
         shell: bash

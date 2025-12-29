@@ -5,7 +5,7 @@
 # 2. Sets up cross-compilation toolchains
 # 3. Builds and optionally tests with Buck2
 
-name: Reusable Test
+name: Build and Test Buck2
 
 on:
   workflow_call:
