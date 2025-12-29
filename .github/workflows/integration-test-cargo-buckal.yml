@@ -1,0 +1,45 @@
+# cargo-buckal Integration Test - Generate Buck2 files for self and validate builds
+#
+# This workflow uses reusable workflows for generate and test phases.
+# It tests cargo-buckal's ability to generate Buck2 files for its own source.
+
+name: Integration Test cargo-buckal
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        type: boolean
+        description: 'Run with tmate debug (manual only)'
+        required: false
+        default: false
+      enable_mingw_jobs:
+        type: boolean
+        description: 'Enable x86_64-pc-windows-gnu MinGW jobs (manual only)'
+        required: false
+        default: false
+  push:
+    branches:
+      - test
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate_buck2_files:
+    uses: ./.github/workflows/_buck2-generate.yml
+    with:
+      project_name: cargo-buckal
+      # No clone_url means self-test (uses checkout)
+
+  test:
+    needs: generate_buck2_files
+    uses: ./.github/workflows/_buck2-build-test.yml
+    with:
+      project_name: cargo-buckal
+      build_target: //...
+      run_tests: false  # cargo-buckal only builds, no tests
+      debug_enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled || false }}
+      enable_mingw_jobs: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_mingw_jobs || false }}

@@ -1,0 +1,46 @@
+# libra Integration Test - Generate Buck2 files and validate builds across platforms
+#
+# This workflow uses reusable workflows for generate and test phases.
+
+name: Integration Test libra
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        type: boolean
+        description: 'Run with tmate debug (manual only)'
+        required: false
+        default: false
+      enable_mingw_jobs:
+        type: boolean
+        description: 'Enable x86_64-pc-windows-gnu MinGW jobs (manual only)'
+        required: false
+        default: false
+  push:
+    branches:
+      - test
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate_buck2_files:
+    uses: ./.github/workflows/_buck2-generate.yml
+    with:
+      project_name: libra
+      clone_url: https://github.com/web3infra-foundation/libra.git
+      clone_ref: main
+      clean_existing_buck2_and_buckal: true
+
+  test:
+    needs: generate_buck2_files
+    uses: ./.github/workflows/_buck2-build-test.yml
+    with:
+      project_name: libra
+      build_target: //...
+      run_tests: true
+      debug_enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled || false }}
+      enable_mingw_jobs: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_mingw_jobs || false }}
