@@ -212,6 +212,24 @@ pub(super) fn set_deps(
 ) -> Result<()> {
     let use_workspace_alias = ctx.repo_config.inherit_workspace_deps && node.id == ctx.root.id;
 
+    // First pass: collect all renamed (aliased) dependency names.
+    // This is needed to handle cases like serde/serde_core where:
+    // - serde_core is renamed to "serde" (aliased dep)
+    // - serde (no rename) would conflict with the aliased dep
+    // We need to know all aliases upfront to skip conflicting non-aliased deps
+    // regardless of processing order.
+    let mut aliased_names = Set::<String>::new();
+    for dep in &node.deps {
+        let Some(dep_package) = packages_map.get(&dep.pkg) else {
+            continue;
+        };
+        let dep_package_name = dep_package.name.to_string();
+        let is_renamed = dep.name != dep_package_name.replace("-", "_");
+        if is_renamed {
+            aliased_names.insert(dep.name.clone());
+        }
+    }
+
     for dep in &node.deps {
         let Some(dep_package) = packages_map.get(&dep.pkg) else {
             continue;
@@ -280,6 +298,21 @@ pub(super) fn set_deps(
                     dep.name, dep_package.name
                 )
             })?;
+
+        // Skip adding to deps if this crate name is already aliased from another package.
+        // This handles the serde/serde_core case where:
+        // - serde_core is renamed to "serde" -> goes into named_deps["serde"]
+        // - serde (no rename) -> would go into deps but conflicts with the named_dep
+        // Having both causes rustc E0464: multiple candidates for rlib dependency.
+        if alias.is_none() && aliased_names.contains(&dep.name) {
+            buckal_note!(
+                "Skipping dep '{}' (package '{}') because another package is aliased as '{}'",
+                dep.name,
+                dep_package.name,
+                dep.name
+            );
+            continue;
+        }
 
         if unconditional {
             insert_dep(rust_rule, &target_label, alias.as_deref(), None)?;
