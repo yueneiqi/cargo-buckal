@@ -111,6 +111,7 @@ jobs:
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
           rm -f buckal.snap .buckconfig .buckroot
+          rm -f buckal.toml
           rm -rf third-party toolchains platforms
 
       - name: Initialize Buck2
