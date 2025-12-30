@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  generate buck2 files:
+  generate_buck2_files:
     uses: ./.github/workflows/_buck2-generate.yml
     with:
       project_name: fd
@@ -35,7 +35,7 @@ jobs:
       clone_ref: v10.3.0
 
   test:
-    needs: generate buck2 files
+    needs: generate_buck2_files
     uses: ./.github/workflows/_buck2-build-test.yml
     with:
       project_name: fd
