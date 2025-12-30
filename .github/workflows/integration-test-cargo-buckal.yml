@@ -28,14 +28,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  generate:
+  generate buck2 files:
     uses: ./.github/workflows/_buck2-generate.yml
     with:
       project_name: cargo-buckal
       # No clone_url means self-test (uses checkout)
 
   test:
-    needs: generate
+    needs: generate buck2 files
     uses: ./.github/workflows/_buck2-build-test.yml
     with:
       project_name: cargo-buckal

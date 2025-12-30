@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  generate:
+  generate buck2 files:
     uses: ./.github/workflows/_buck2-generate.yml
     with:
       project_name: git-internal
@@ -36,7 +36,7 @@ jobs:
       clean_existing_buck2_and_buckal: true
 
   test:
-    needs: generate
+    needs: generate buck2 files
     uses: ./.github/workflows/_buck2-build-test.yml
     with:
       project_name: git-internal
