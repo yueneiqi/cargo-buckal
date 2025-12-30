@@ -66,28 +66,13 @@ jobs:
         shell: bash
         run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> "$GITHUB_ENV"
 
-      - name: Enable long paths (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          git config --global core.longpaths true
-          git config --global core.autocrlf input
-          git config --global core.eol lf
-          New-ItemProperty `
-            -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem" `
-            -Name "LongPathsEnabled" `
-            -Value 1 `
-            -PropertyType DWORD `
-            -Force `
-            | Out-Null
-          "CARGO_HOME=C:\\c" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RUSTUP_HOME=C:\\r" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CARGO_TARGET_DIR=C:\\t" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       - name: Checkout cargo-buckal
         uses: actions/checkout@v6
         with:
           path: cargo-buckal
+
+      - name: Setup Windows environment
+        uses: ./cargo-buckal/.github/actions/setup-windows
 
       - name: Clone ${{ inputs.project_name }} ${{ inputs.clone_ref }}
         if: inputs.clone_url != ''
@@ -95,21 +80,10 @@ jobs:
         run: |
           git clone --depth 1 --branch "${{ inputs.clone_ref }}" "${{ inputs.clone_url }}" "${{ inputs.project_dir || inputs.project_name }}"
 
-      - name: Setup Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust toolchains
+        uses: ./cargo-buckal/.github/actions/setup-rust-toolchains
         with:
-          toolchain: stable
-
-      - name: Setup Python 3.11 (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install nightly toolchain for Buck2
-        shell: bash
-        run: |
-          rustup toolchain install ${{ inputs.nightly_toolchain }} -c rust-src -c llvm-tools-preview
+          nightly_toolchain: ${{ inputs.nightly_toolchain }}
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -118,19 +92,11 @@ jobs:
             cargo-buckal -> target
           cache-all-crates: true
 
-      - name: Install Buck2 (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cargo +${{ inputs.nightly_toolchain }} install --git https://github.com/facebook/buck2.git --rev ${{ inputs.buck2_rev }} buck2
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Install Buck2 (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo +${{ inputs.nightly_toolchain }} install --git https://github.com/facebook/buck2.git --rev ${{ inputs.buck2_rev }} buck2
-          "$env:CARGO_HOME\\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install Buck2
+        uses: ./cargo-buckal/.github/actions/install-buck2
+        with:
+          buck2_rev: ${{ inputs.buck2_rev }}
+          nightly_toolchain: ${{ inputs.nightly_toolchain }}
 
       - name: Install cargo-buckal
         shell: bash

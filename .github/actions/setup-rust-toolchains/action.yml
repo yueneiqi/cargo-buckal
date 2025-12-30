@@ -1,0 +1,32 @@
+name: 'Setup Rust Toolchains'
+description: 'Setup Rust stable and nightly toolchains with required components'
+
+inputs:
+  nightly_toolchain:
+    description: 'Nightly Rust toolchain version'
+    required: false
+    default: 'nightly-2025-08-01'
+  targets:
+    description: 'Additional Rust targets to install (comma-separated)'
+    required: false
+    default: ''
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust toolchain (stable)
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+        targets: ${{ inputs.targets }}
+
+    - name: Setup Python 3.11 (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install nightly toolchain for Buck2
+      shell: bash
+      run: |
+        rustup toolchain install ${{ inputs.nightly_toolchain }} -c rust-src -c llvm-tools-preview

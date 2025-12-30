@@ -1,0 +1,29 @@
+name: 'Install Buck2'
+description: 'Install Buck2 from git repository'
+
+inputs:
+  buck2_rev:
+    description: 'Buck2 git revision to install'
+    required: false
+    default: 'c6bfcc629378a00921aa04597551442c9e2ea2eb'
+  nightly_toolchain:
+    description: 'Nightly Rust toolchain to use for building Buck2'
+    required: false
+    default: 'nightly-2025-08-01'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Buck2 (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        cargo +${{ inputs.nightly_toolchain }} install --git https://github.com/facebook/buck2.git --rev ${{ inputs.buck2_rev }} buck2
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install Buck2 (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        cargo +${{ inputs.nightly_toolchain }} install --git https://github.com/facebook/buck2.git --rev ${{ inputs.buck2_rev }} buck2
+        "$env:CARGO_HOME\\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
