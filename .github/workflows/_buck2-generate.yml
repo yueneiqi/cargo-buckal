@@ -47,7 +47,7 @@ on:
         default: false
 
 jobs:
-  generate:
+  generate buck2 files:
     name: generate (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
