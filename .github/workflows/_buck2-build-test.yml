@@ -52,7 +52,7 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.target }} / ${{ matrix.gen_platform }}-gen (${{ matrix.os }})${{ matrix.mingw_variant && format(' [{0}]', matrix.mingw_variant) || '' }}
+    name: ${{ matrix.target }} ${{ matrix.gen_platform }}-gen (${{ matrix.os }})${{ matrix.mingw_variant && format(' [{0}]', matrix.mingw_variant) || '' }}
     runs-on: ${{ matrix.os }}
     env:
       MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
