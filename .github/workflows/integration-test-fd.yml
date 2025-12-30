@@ -1,9 +1,8 @@
-# cargo-buckal Integration Test - Generate Buck2 files for self and validate builds
+# fd Integration Test - Generate Buck2 files and validate builds across platforms
 #
 # This workflow uses reusable workflows for generate and test phases.
-# It tests cargo-buckal's ability to generate Buck2 files for its own source.
 
-name: cargo-buckal Integration Test
+name: Integration Test fd
 
 on:
   pull_request:
@@ -31,15 +30,16 @@ jobs:
   generate:
     uses: ./.github/workflows/_buck2-generate.yml
     with:
-      project_name: cargo-buckal
-      # No clone_url means self-test (uses checkout)
+      project_name: fd
+      clone_url: https://github.com/sharkdp/fd.git
+      clone_ref: v10.3.0
 
   test:
     needs: generate
     uses: ./.github/workflows/_buck2-build-test.yml
     with:
-      project_name: cargo-buckal
-      build_target: //...
-      run_tests: false  # cargo-buckal only builds, no tests
+      project_name: fd
+      build_target: //:fd
+      run_tests: true
       debug_enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled || false }}
       enable_mingw_jobs: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_mingw_jobs || false }}

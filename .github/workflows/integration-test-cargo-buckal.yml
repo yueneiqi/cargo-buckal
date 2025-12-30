@@ -1,8 +1,9 @@
-# libra Integration Test - Generate Buck2 files and validate builds across platforms
+# cargo-buckal Integration Test - Generate Buck2 files for self and validate builds
 #
 # This workflow uses reusable workflows for generate and test phases.
+# It tests cargo-buckal's ability to generate Buck2 files for its own source.
 
-name: libra Integration Test
+name: Integration Test cargo-buckal
 
 on:
   pull_request:
@@ -30,17 +31,15 @@ jobs:
   generate:
     uses: ./.github/workflows/_buck2-generate.yml
     with:
-      project_name: libra
-      clone_url: https://github.com/web3infra-foundation/libra.git
-      clone_ref: main
-      clean_existing_buck2_and_buckal: true
+      project_name: cargo-buckal
+      # No clone_url means self-test (uses checkout)
 
   test:
     needs: generate
     uses: ./.github/workflows/_buck2-build-test.yml
     with:
-      project_name: libra
+      project_name: cargo-buckal
       build_target: //...
-      run_tests: true
+      run_tests: false  # cargo-buckal only builds, no tests
       debug_enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled || false }}
       enable_mingw_jobs: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_mingw_jobs || false }}
