@@ -14,7 +14,7 @@ The generated rules use canonical Buck prelude OS constraint labels: `prelude//o
 
 Cargo encodes target-specific dependencies in `cargo metadata` as platform predicates (for example, `cfg(target_os = "windows")`). During `migrate`, cargo-buckal maps those predicates to a set of OS keys (`linux`/`macos`/`windows`) by evaluating them against cached `rustc --print=cfg --target <triple>` snapshots for Rust Tier-1 host targets.
 
-If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal treats the dependency as unconditional by default (to preserve build success). If you prefer dropping deps that only target unsupported platforms, use `--supported-platform-only`.
+If a predicate matches none of `linux`/`macos`/`windows`, cargo-buckal treats the dependency as unsupported-only and omits it from generated rules.
 
 ## Using it
 
