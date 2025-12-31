@@ -101,21 +101,132 @@ fn get_rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
         }
         Ok(output) => {
             buckal_warn!(
-                "Failed to run `rustc --print=cfg --target {}`: {}",
+                "Failed to run `rustc --print=cfg --target {}`: {}. Falling back to built-in cfgs.",
                 triple,
                 String::from_utf8_lossy(&output.stderr)
             );
-            None
+            fallback_cfgs_for_triple(triple)
         }
         Err(error) => {
             buckal_warn!(
-                "Failed to execute `rustc --print=cfg --target {}`: {}",
+                "Failed to execute `rustc --print=cfg --target {}`: {}. Falling back to built-in cfgs.",
                 triple,
                 error
             );
-            None
+            fallback_cfgs_for_triple(triple)
         }
     }
+}
+
+fn fallback_cfgs_for_triple(triple: &str) -> Option<Vec<Cfg>> {
+    // Provide a minimal cfg set so platform mapping works even when rustc targets are missing.
+    let entries: &[&str] = match triple {
+        "aarch64-apple-darwin" => &[
+            "target_arch=\"aarch64\"",
+            "target_endian=\"little\"",
+            "target_family=\"unix\"",
+            "target_os=\"macos\"",
+            "target_pointer_width=\"64\"",
+            "target_vendor=\"apple\"",
+            "target_abi=\"\"",
+            "unix",
+        ],
+        "x86_64-apple-darwin" => &[
+            "target_arch=\"x86_64\"",
+            "target_endian=\"little\"",
+            "target_family=\"unix\"",
+            "target_os=\"macos\"",
+            "target_pointer_width=\"64\"",
+            "target_vendor=\"apple\"",
+            "target_abi=\"\"",
+            "unix",
+        ],
+        "aarch64-pc-windows-msvc" => &[
+            "target_arch=\"aarch64\"",
+            "target_endian=\"little\"",
+            "target_env=\"msvc\"",
+            "target_family=\"windows\"",
+            "target_os=\"windows\"",
+            "target_pointer_width=\"64\"",
+            "target_vendor=\"pc\"",
+            "target_abi=\"msvc\"",
+            "windows",
+        ],
+        "x86_64-pc-windows-msvc" => &[
+            "target_arch=\"x86_64\"",
+            "target_endian=\"little\"",
+            "target_env=\"msvc\"",
+            "target_family=\"windows\"",
+            "target_os=\"windows\"",
+            "target_pointer_width=\"64\"",
+            "target_vendor=\"pc\"",
+            "target_abi=\"msvc\"",
+            "windows",
+        ],
+        "x86_64-pc-windows-gnu" => &[
+            "target_arch=\"x86_64\"",
+            "target_endian=\"little\"",
+            "target_env=\"gnu\"",
+            "target_family=\"windows\"",
+            "target_os=\"windows\"",
+            "target_pointer_width=\"64\"",
+            "target_vendor=\"pc\"",
+            "target_abi=\"gnu\"",
+            "windows",
+        ],
+        "i686-pc-windows-msvc" => &[
+            "target_arch=\"x86\"",
+            "target_endian=\"little\"",
+            "target_env=\"msvc\"",
+            "target_family=\"windows\"",
+            "target_os=\"windows\"",
+            "target_pointer_width=\"32\"",
+            "target_vendor=\"pc\"",
+            "target_abi=\"msvc\"",
+            "windows",
+        ],
+        "aarch64-unknown-linux-gnu" => &[
+            "target_arch=\"aarch64\"",
+            "target_endian=\"little\"",
+            "target_env=\"gnu\"",
+            "target_family=\"unix\"",
+            "target_os=\"linux\"",
+            "target_pointer_width=\"64\"",
+            "target_vendor=\"unknown\"",
+            "target_abi=\"\"",
+            "unix",
+        ],
+        "x86_64-unknown-linux-gnu" => &[
+            "target_arch=\"x86_64\"",
+            "target_endian=\"little\"",
+            "target_env=\"gnu\"",
+            "target_family=\"unix\"",
+            "target_os=\"linux\"",
+            "target_pointer_width=\"64\"",
+            "target_vendor=\"unknown\"",
+            "target_abi=\"\"",
+            "unix",
+        ],
+        "i686-unknown-linux-gnu" => &[
+            "target_arch=\"x86\"",
+            "target_endian=\"little\"",
+            "target_env=\"gnu\"",
+            "target_family=\"unix\"",
+            "target_os=\"linux\"",
+            "target_pointer_width=\"32\"",
+            "target_vendor=\"unknown\"",
+            "target_abi=\"\"",
+            "unix",
+        ],
+        _ => return None,
+    };
+
+    Some(
+        entries
+            .iter()
+            .filter_map(|line| Cfg::from_str(line).ok())
+            .collect(),
+    )
 }
 
 fn cfg_cache() -> &'static HashMap<&'static str, Vec<Cfg>> {
