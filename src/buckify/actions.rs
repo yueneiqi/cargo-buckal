@@ -93,7 +93,10 @@ impl BuckalChange {
                         continue;
                     }
 
-                    let caps = re.captures(&id.repr).expect("Failed to parse package ID");
+                    let Some(caps) = re.captures(&id.repr) else {
+                        buckal_log!("Skipping", format!("unable to parse package ID {}", id));
+                        continue;
+                    };
                     let name = &caps[3];
                     let version = &caps[4];
 

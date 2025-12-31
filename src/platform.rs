@@ -6,7 +6,7 @@ use std::{
 };
 
 use bitflags::bitflags;
-use cargo_platform::{Cfg, Platform};
+use cargo_platform::{Cfg, CfgExpr, Platform};
 
 use crate::buckal_warn;
 
@@ -105,7 +105,7 @@ fn get_rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
                 triple,
                 String::from_utf8_lossy(&output.stderr)
             );
-            None
+            fallback_cfgs_for_triple(triple)
         }
         Err(error) => {
             buckal_warn!(
@@ -113,8 +113,68 @@ fn get_rustc_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
                 triple,
                 error
             );
-            None
+            fallback_cfgs_for_triple(triple)
         }
+    }
+}
+
+fn fallback_cfgs_for_triple(triple: &'static str) -> Option<Vec<Cfg>> {
+    fn cfg_from_str(value: &str) -> Cfg {
+        Cfg::from_str(value).expect("fallback cfg value should parse")
+    }
+
+    fn build_cfgs(
+        target_arch: &str,
+        target_os: &str,
+        target_vendor: &str,
+        target_env: &str,
+        target_family: &str,
+        pointer_width: &str,
+    ) -> Vec<Cfg> {
+        let mut cfgs = Vec::new();
+        cfgs.push(cfg_from_str(&format!("target_arch = \"{target_arch}\"")));
+        cfgs.push(cfg_from_str(&format!("target_os = \"{target_os}\"")));
+        cfgs.push(cfg_from_str(&format!("target_vendor = \"{target_vendor}\"")));
+        cfgs.push(cfg_from_str(&format!("target_env = \"{target_env}\"")));
+        cfgs.push(cfg_from_str(&format!("target_family = \"{target_family}\"")));
+        cfgs.push(cfg_from_str(&format!(
+            "target_pointer_width = \"{pointer_width}\""
+        )));
+        cfgs.push(cfg_from_str("target_endian = \"little\""));
+        if target_family == "windows" {
+            cfgs.push(cfg_from_str("windows"));
+        } else {
+            cfgs.push(cfg_from_str("unix"));
+        }
+        cfgs
+    }
+
+    match triple {
+        "aarch64-apple-darwin" => Some(build_cfgs(
+            "aarch64", "macos", "apple", "", "unix", "64",
+        )),
+        "aarch64-unknown-linux-gnu" => Some(build_cfgs(
+            "aarch64", "linux", "unknown", "gnu", "unix", "64",
+        )),
+        "aarch64-pc-windows-msvc" => Some(build_cfgs(
+            "aarch64", "windows", "pc", "msvc", "windows", "64",
+        )),
+        "x86_64-unknown-linux-gnu" => Some(build_cfgs(
+            "x86_64", "linux", "unknown", "gnu", "unix", "64",
+        )),
+        "x86_64-pc-windows-msvc" => Some(build_cfgs(
+            "x86_64", "windows", "pc", "msvc", "windows", "64",
+        )),
+        "x86_64-pc-windows-gnu" => Some(build_cfgs(
+            "x86_64", "windows", "pc", "gnu", "windows", "64",
+        )),
+        "i686-unknown-linux-gnu" => Some(build_cfgs(
+            "x86", "linux", "unknown", "gnu", "unix", "32",
+        )),
+        "i686-pc-windows-msvc" => Some(build_cfgs(
+            "x86", "windows", "pc", "msvc", "windows", "32",
+        )),
+        _ => None,
     }
 }
 
@@ -190,6 +250,41 @@ pub fn oses_from_platform(platform: &Platform) -> BTreeSet<Os> {
         .collect()
 }
 
+fn cfg_is_target_only(cfg: &Cfg) -> bool {
+    match cfg {
+        Cfg::Name(name) => matches!(name.as_str(), "windows" | "unix"),
+        Cfg::KeyPair(key, _) => matches!(
+            key.as_str(),
+            "target_arch"
+                | "target_os"
+                | "target_family"
+                | "target_env"
+                | "target_vendor"
+                | "target_endian"
+                | "target_pointer_width"
+                | "target_feature"
+        ),
+    }
+}
+
+fn cfg_expr_is_target_only(expr: &CfgExpr) -> bool {
+    match expr {
+        CfgExpr::Not(inner) => cfg_expr_is_target_only(inner),
+        CfgExpr::All(items) | CfgExpr::Any(items) => {
+            items.iter().all(cfg_expr_is_target_only)
+        }
+        CfgExpr::Value(cfg) => cfg_is_target_only(cfg),
+        CfgExpr::True | CfgExpr::False => false,
+    }
+}
+
+pub fn platform_is_target_only(platform: &Platform) -> bool {
+    match platform {
+        Platform::Name(_) => true,
+        Platform::Cfg(expr) => cfg_expr_is_target_only(expr),
+    }
+}
+
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct PlatformMask: u32 {
@@ -216,7 +311,10 @@ impl PlatformMask {
 }
 
 static PACKAGE_PLATFORMS: phf::Map<&'static str, PlatformMask> = phf::phf_map! {
+    "android_system_properties" => PlatformMask::LINUX,
     "hyper-named-pipe" => PlatformMask::WINDOWS,
+    "libredox" => PlatformMask::LINUX,
+    "redox_syscall" => PlatformMask::LINUX,
     "system-configuration" => PlatformMask::MACOS,
     "windows-future" => PlatformMask::WINDOWS,
     "windows" => PlatformMask::WINDOWS,

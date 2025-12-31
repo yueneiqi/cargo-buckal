@@ -18,6 +18,14 @@ use crate::{
 
 use super::deps::{dep_kind_matches, set_deps};
 
+fn adjusted_features(package: &Package, node: &Node) -> Set<String> {
+    let mut features = Set::from_iter(node.features.iter().map(|f| f.to_string()));
+    if package.name.as_str() == "zstd-sys" {
+        features.remove("bindgen");
+    }
+    features
+}
+
 /// Emit `rust_library` rule for the given lib target
 pub(super) fn emit_rust_library(
     package: &Package,
@@ -28,12 +36,13 @@ pub(super) fn emit_rust_library(
     buckal_name: &str,
     ctx: &BuckalContext,
 ) -> RustLibrary {
+    let features = adjusted_features(package, node);
     let mut rust_library = RustLibrary {
         name: buckal_name.to_owned(),
         srcs: Set::from([get_vendor_target(package)]),
         crate_name: lib_target.name.to_owned().replace("-", "_"),
         edition: package.edition.to_string(),
-        features: Set::from_iter(node.features.iter().map(|f| f.to_string())),
+        features,
         rustc_flags: Set::from([format!(
             "@$(location :{}-manifest[env_flags])",
             package.name
@@ -41,6 +50,7 @@ pub(super) fn emit_rust_library(
         visibility: Set::from(["PUBLIC".to_owned()]),
         ..Default::default()
     };
+    ensure_python_utf8_env(&mut rust_library.env);
 
     if lib_target
         .kind
@@ -90,12 +100,13 @@ pub(super) fn emit_rust_binary(
     buckal_name: &str,
     ctx: &BuckalContext,
 ) -> RustBinary {
+    let features = adjusted_features(package, node);
     let mut rust_binary = RustBinary {
         name: buckal_name.to_owned(),
         srcs: Set::from([get_vendor_target(package)]),
         crate_name: bin_target.name.to_owned().replace("-", "_"),
         edition: package.edition.to_string(),
-        features: Set::from_iter(node.features.iter().map(|f| f.to_string())),
+        features,
         rustc_flags: Set::from([format!(
             "@$(location :{}-manifest[env_flags])",
             package.name
@@ -103,6 +114,7 @@ pub(super) fn emit_rust_binary(
         visibility: Set::from(["PUBLIC".to_owned()]),
         ..Default::default()
     };
+    ensure_python_utf8_env(&mut rust_binary.env);
 
     // Set the crate root path
     rust_binary.crate_root = format!(
@@ -144,12 +156,13 @@ pub(super) fn emit_rust_test(
     buckal_name: &str,
     ctx: &BuckalContext,
 ) -> RustTest {
+    let features = adjusted_features(package, node);
     let mut rust_test = RustTest {
         name: buckal_name.to_owned(),
         srcs: Set::from([get_vendor_target(package)]),
         crate_name: test_target.name.to_owned().replace("-", "_"),
         edition: package.edition.to_string(),
-        features: Set::from_iter(node.features.iter().map(|f| f.to_string())),
+        features,
         rustc_flags: Set::from([format!(
             "@$(location :{}-manifest[env_flags])",
             package.name
@@ -157,6 +170,7 @@ pub(super) fn emit_rust_test(
         visibility: Set::from(["PUBLIC".to_owned()]),
         ..Default::default()
     };
+    ensure_python_utf8_env(&mut rust_test.env);
 
     // Set the crate root path
     rust_test.crate_root = format!(
@@ -197,19 +211,21 @@ pub(super) fn emit_buildscript_build(
     manifest_dir: &Utf8PathBuf,
     ctx: &BuckalContext,
 ) -> RustBinary {
+    let features = adjusted_features(package, node);
     // create the build script rule
     let mut buildscript_build = RustBinary {
         name: format!("{}-{}", package.name, build_target.name),
         srcs: Set::from([get_vendor_target(package)]),
         crate_name: build_target.name.to_owned().replace("-", "_"),
         edition: package.edition.to_string(),
-        features: Set::from_iter(node.features.iter().map(|f| f.to_string())),
+        features,
         rustc_flags: Set::from([format!(
             "@$(location :{}-manifest[env_flags])",
             package.name
         )]),
         ..Default::default()
     };
+    ensure_python_utf8_env(&mut buildscript_build.env);
 
     // Set the crate root path for the build script
     buildscript_build.crate_root = format!(
@@ -247,6 +263,7 @@ pub(super) fn emit_buildscript_run(
     packages_map: &HashMap<PackageId, Package>,
     build_target: &Target,
 ) -> BuildscriptRun {
+    let features = adjusted_features(package, node);
     // create the build script run rule
     let build_name = get_build_name(&build_target.name);
     let mut buildscript_run = BuildscriptRun {
@@ -254,7 +271,7 @@ pub(super) fn emit_buildscript_run(
         package_name: package.name.to_string(),
         buildscript_rule: format!(":{}-{}", package.name, build_target.name),
         env_srcs: Set::from([format!(":{}-manifest[env_dict]", package.name)]),
-        features: Set::from_iter(node.features.iter().map(|f| f.to_string())),
+        features,
         version: package.version.to_string(),
         manifest_dir: format!(":{}-vendor", package.name),
         visibility: Set::from(["PUBLIC".to_owned()]),
@@ -371,6 +388,13 @@ fn get_build_name(s: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(s)
     }
+}
+
+fn ensure_python_utf8_env(env: &mut std::collections::BTreeMap<String, String>) {
+    env.entry("PYTHONUTF8".to_owned())
+        .or_insert_with(|| "1".to_owned());
+    env.entry("PYTHONIOENCODING".to_owned())
+        .or_insert_with(|| "utf-8".to_owned());
 }
 
 fn get_vendor_target(package: &Package) -> String {

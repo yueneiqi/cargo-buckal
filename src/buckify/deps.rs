@@ -10,7 +10,7 @@ use crate::{
     buck2::Buck2Command,
     buckal_note, buckal_warn,
     context::BuckalContext,
-    platform::{Os, oses_from_platform},
+    platform::{Os, oses_from_platform, platform_is_target_only},
     utils::get_buck2_root,
 };
 
@@ -219,8 +219,7 @@ pub(super) fn set_deps(
 
         let mut unconditional = false;
         let mut platforms = Set::<Os>::new();
-        let mut dropped_due_to_unsupported = false;
-        let mut has_unmapped_platform = false;
+        let mut has_unsupported_platform = false;
 
         for dk in dep
             .dep_kinds
@@ -232,45 +231,27 @@ pub(super) fn set_deps(
                 Some(platform) => {
                     let oses = oses_from_platform(platform);
                     if oses.is_empty() {
-                        // Only drop unsupported platforms if the flag is set
-                        if ctx.supported_platform_only {
-                            dropped_due_to_unsupported = true;
+                        if platform_is_target_only(platform) {
+                            has_unsupported_platform = true;
                             continue;
                         }
-                        // If flag is not set, fall back to unconditional (handled below) so we
-                        // don't silently drop dependencies when the platform can't be mapped.
-                        has_unmapped_platform = true;
-                    } else {
-                        platforms.extend(oses);
+                        unconditional = true;
+                        continue;
                     }
+                    platforms.extend(oses);
                 }
             }
         }
 
         if !unconditional && platforms.is_empty() {
-            if dropped_due_to_unsupported {
+            if has_unsupported_platform {
                 buckal_note!(
                     "Dependency '{}' (package '{}') targets only unsupported platforms and will be omitted.",
                     dep.name,
                     dep_package.name
                 );
-                continue;
             }
-            if has_unmapped_platform {
-                // `dep.name` is the dependency/crate name as referenced by the parent crate (after
-                // Cargo normalization and/or dependency renames), while `dep_package.name` is the
-                // package name from the dependency's manifest. They can differ for renamed deps or
-                // for hyphenated packages (e.g. `foo-bar` -> crate name `foo_bar`).
-                buckal_note!(
-                    "Dependency '{}' (package '{}') targets platform(s) that could not be mapped; treating as unconditional because --supported-platform-only is not set.",
-                    dep.name,
-                    dep_package.name
-                );
-                unconditional = true;
-            }
-            if !unconditional && platforms.is_empty() {
-                continue;
-            }
+            continue;
         }
 
         let (target_label, alias) = resolve_dep_label(dep, dep_package, use_workspace_alias)
