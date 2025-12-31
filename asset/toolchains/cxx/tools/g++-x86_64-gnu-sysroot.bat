@@ -5,14 +5,6 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem Add Rust's GNU sysroot "self-contained" libs to the search path.
 rem This provides libgcc_eh.a (and friends) even when the system MinGW is incomplete.
 
-for /f "delims=" %%I in ('rustc +stable-x86_64-pc-windows-gnu --print sysroot') do set "SYSROOT=%%I"
-
-set "SELF_CONTAINED=%SYSROOT%\lib\rustlib\x86_64-pc-windows-gnu\lib\self-contained"
-if not exist "%SELF_CONTAINED%" (
-  echo g++-x86_64-gnu-sysroot.bat: self-contained dir not found: "%SELF_CONTAINED%" 1>&2
-  exit /b 1
-)
-
 set "NEED_SELF_CONTAINED="
 for %%L in (libpthread.a libgcc_eh.a) do (
   set "FOUND="
@@ -23,11 +15,40 @@ for %%L in (libpthread.a libgcc_eh.a) do (
   )
 )
 
-if defined NEED_SELF_CONTAINED (
-  g++ -L"%SELF_CONTAINED%" %*
-) else (
+if not defined NEED_SELF_CONTAINED (
   g++ %*
+  set "STATUS=!ERRORLEVEL!"
+  exit /b %STATUS%
 )
 
+set "RUSTC_FROM_ENV="
+if defined RUSTC (
+  set "RUSTC_FROM_ENV=1"
+  set "RUSTC_CMD=%RUSTC%"
+) else (
+  set "RUSTC_CMD=rustc"
+)
+
+for /f "delims=" %%I in ('"%RUSTC_CMD%" --print sysroot') do set "SYSROOT=%%I"
+
+set "TRIED_STABLE="
+if not defined SYSROOT if not defined RUSTC_FROM_ENV (
+  for /f "delims=" %%I in ('rustc +stable-x86_64-pc-windows-gnu --print sysroot') do set "SYSROOT=%%I"
+  set "TRIED_STABLE=1"
+)
+
+set "SELF_CONTAINED=%SYSROOT%\lib\rustlib\x86_64-pc-windows-gnu\lib\self-contained"
+if not exist "%SELF_CONTAINED%" if not defined RUSTC_FROM_ENV if not defined TRIED_STABLE (
+  for /f "delims=" %%I in ('rustc +stable-x86_64-pc-windows-gnu --print sysroot') do set "SYSROOT=%%I"
+  set "TRIED_STABLE=1"
+  set "SELF_CONTAINED=%SYSROOT%\lib\rustlib\x86_64-pc-windows-gnu\lib\self-contained"
+)
+
+if not exist "%SELF_CONTAINED%" (
+  echo g++-x86_64-gnu-sysroot.bat: self-contained dir not found: "%SELF_CONTAINED%" 1>&2
+  exit /b 1
+)
+
+g++ -L"%SELF_CONTAINED%" %*
 set "STATUS=!ERRORLEVEL!"
 exit /b %STATUS%
