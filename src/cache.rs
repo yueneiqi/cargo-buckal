@@ -10,8 +10,7 @@ use crate::utils::{UnwrapOrExit, get_cache_path};
 
 /// CACHE_VERSION is incremented whenever the cache format or logic changes in a way that is not backward-compatible.
 ///
-/// Version 2: Added multi-platform support to the cache format, which is not compatible with version 1 caches.
-///            This change requires invalidating and rebuilding any existing cache from version 1.
+/// Version 2: Added multi-platform support to the cache format.
 ///
 /// Migration strategy: There is no automatic migration; if a cache version mismatch is detected, the old cache is ignored and a new cache is created.
 /// This ensures correctness at the cost of recomputation.
@@ -127,8 +126,16 @@ impl BuckalCache {
             return Err(anyhow!("Cache file does not exist"));
         }
         let content = std::fs::read_to_string(&cache_path)?;
-        toml::from_str::<BuckalCache>(&content)
-            .map_err(|e| anyhow!("Failed to parse cache file: {}", e))
+        let cache = toml::from_str::<BuckalCache>(&content)
+            .map_err(|e| anyhow!("Failed to parse cache file: {}", e))?;
+        if cache.version != CACHE_VERSION {
+            return Err(anyhow!(
+                "Cache version mismatch (found {}, expected {})",
+                cache.version,
+                CACHE_VERSION
+            ));
+        }
+        Ok(cache)
     }
 
     pub fn save(&self) {
