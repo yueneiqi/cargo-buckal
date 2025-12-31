@@ -6,7 +6,7 @@ use std::{
 };
 
 use bitflags::bitflags;
-use cargo_platform::{Cfg, Platform};
+use cargo_platform::{Cfg, CfgExpr, Platform};
 
 use crate::buckal_warn;
 
@@ -75,7 +75,7 @@ static CFG_CACHE: OnceLock<HashMap<&'static str, Vec<Cfg>>> = OnceLock::new();
 ///
 /// When this function returns `None`, the target triple is excluded from platform matching.
 /// This is the expected behavior when a target is not installed, allowing the build system
-/// to gracefully handle missing targets without failing the entire build process.
+/// to handle missing targets without failing the entire build process.
 ///
 /// # Examples
 ///
@@ -190,6 +190,41 @@ pub fn oses_from_platform(platform: &Platform) -> BTreeSet<Os> {
         .collect()
 }
 
+fn cfg_is_target_only(cfg: &Cfg) -> bool {
+    match cfg {
+        Cfg::Name(name) => matches!(name.as_str(), "windows" | "unix"),
+        Cfg::KeyPair(key, _) => matches!(
+            key.as_str(),
+            "target_arch"
+                | "target_os"
+                | "target_family"
+                | "target_env"
+                | "target_vendor"
+                | "target_endian"
+                | "target_pointer_width"
+                | "target_feature"
+        ),
+    }
+}
+
+fn cfg_expr_is_target_only(expr: &CfgExpr) -> bool {
+    match expr {
+        CfgExpr::Not(inner) => cfg_expr_is_target_only(inner),
+        CfgExpr::All(items) | CfgExpr::Any(items) => {
+            items.iter().all(cfg_expr_is_target_only)
+        }
+        CfgExpr::Value(cfg) => cfg_is_target_only(cfg),
+        CfgExpr::True | CfgExpr::False => false,
+    }
+}
+
+pub fn platform_is_target_only(platform: &Platform) -> bool {
+    match platform {
+        Platform::Name(_) => true,
+        Platform::Cfg(expr) => cfg_expr_is_target_only(expr),
+    }
+}
+
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct PlatformMask: u32 {
@@ -216,7 +251,10 @@ impl PlatformMask {
 }
 
 static PACKAGE_PLATFORMS: phf::Map<&'static str, PlatformMask> = phf::phf_map! {
+    "android_system_properties" => PlatformMask::LINUX,
     "hyper-named-pipe" => PlatformMask::WINDOWS,
+    "libredox" => PlatformMask::LINUX,
+    "redox_syscall" => PlatformMask::LINUX,
     "system-configuration" => PlatformMask::MACOS,
     "windows-future" => PlatformMask::WINDOWS,
     "windows" => PlatformMask::WINDOWS,
