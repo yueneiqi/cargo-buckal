@@ -17,7 +17,10 @@ use crate::{
 pub(super) fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> bool {
     match target_kind {
         CargoTargetKind::CustomBuild => dep_kind == DependencyKind::Build,
-        CargoTargetKind::Test => dep_kind == DependencyKind::Development,
+        // Cargo test targets can depend on both dev-deps and regular deps.
+        CargoTargetKind::Test => {
+            dep_kind == DependencyKind::Development || dep_kind == DependencyKind::Normal
+        }
         _ => dep_kind == DependencyKind::Normal,
     }
 }
