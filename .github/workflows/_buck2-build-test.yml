@@ -64,101 +64,125 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
             gen_platform: linux
+            test_platform_suffix: ""
           - target: aarch64-apple-darwin
             os: macos-14
             gen_platform: macos
+            test_platform_suffix: ""
           - target: aarch64-apple-darwin
             os: macos-14
             gen_platform: windows
+            test_platform_suffix: ""
 
           # ========== aarch64-pc-windows-msvc (windows-11-arm) ==========
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
             gen_platform: linux
             exec_platform_override: "aarch64-pc-windows-msvc"
+            test_platform_suffix: ""
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
             gen_platform: macos
             exec_platform_override: "aarch64-pc-windows-msvc"
+            test_platform_suffix: ""
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
             gen_platform: windows
             exec_platform_override: "aarch64-pc-windows-msvc"
+            test_platform_suffix: ""
 
           # ========== aarch64-unknown-linux-gnu (ubuntu-24.04) ==========
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: linux
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            test_platform_suffix: "-cross"
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: macos
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            test_platform_suffix: "-cross"
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: windows
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            test_platform_suffix: "-cross"
 
           # ========== i686-pc-windows-msvc (windows-2022) ==========
           - target: i686-pc-windows-msvc
             os: windows-2022
             gen_platform: linux
+            test_platform_suffix: "-cross"
           - target: i686-pc-windows-msvc
             os: windows-2022
             gen_platform: macos
+            test_platform_suffix: "-cross"
           - target: i686-pc-windows-msvc
             os: windows-2022
             gen_platform: windows
+            test_platform_suffix: "-cross"
 
           # ========== i686-unknown-linux-gnu (ubuntu-24.04) ==========
           - target: i686-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: linux
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
+            test_platform_suffix: "-cross"
           - target: i686-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: macos
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
+            test_platform_suffix: "-cross"
           - target: i686-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: windows
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
+            test_platform_suffix: "-cross"
 
           # ========== x86_64-pc-windows-gnu (windows-2022) [no-mingw] ==========
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: linux
             mingw_variant: no-mingw
+            test_platform_suffix: "-cross"
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: macos
             mingw_variant: no-mingw
+            test_platform_suffix: "-cross"
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: windows
             mingw_variant: no-mingw
+            test_platform_suffix: "-cross"
 
           # ========== x86_64-pc-windows-msvc (windows-2022) ==========
           - target: x86_64-pc-windows-msvc
             os: windows-2022
             gen_platform: linux
+            test_platform_suffix: ""
           - target: x86_64-pc-windows-msvc
             os: windows-2022
             gen_platform: macos
+            test_platform_suffix: ""
           - target: x86_64-pc-windows-msvc
             os: windows-2022
             gen_platform: windows
+            test_platform_suffix: ""
 
           # ========== x86_64-unknown-linux-gnu (ubuntu-24.04) ==========
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: linux
+            test_platform_suffix: ""
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: macos
+            test_platform_suffix: ""
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: windows
+            test_platform_suffix: ""
 
     steps: &test_steps
       - name: Set cargo target dir
@@ -297,14 +321,14 @@ jobs:
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 test //... --target-platforms //platforms:${{ matrix.target }} -c build.execution_platforms=//platforms:${{ matrix.exec_platform_override }}
+          buck2 test //... --target-platforms //platforms:${{ matrix.target }}${{ matrix.test_platform_suffix }} -c build.execution_platforms=//platforms:${{ matrix.exec_platform_override }}
 
       - name: Buck2 test
         if: inputs.run_tests && matrix.exec_platform_override == ''
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 test //... --target-platforms //platforms:${{ matrix.target }}
+          buck2 test //... --target-platforms //platforms:${{ matrix.target }}${{ matrix.test_platform_suffix }}
 
   test-mingw:
     name: ${{ matrix.target }} / ${{ matrix.gen_platform }}-gen (${{ matrix.os }})${{ matrix.mingw_variant && format(' [{0}]', matrix.mingw_variant) || '' }}
@@ -322,14 +346,17 @@ jobs:
             gen_platform: linux
             needs_mingw: true
             mingw_variant: mingw
+            test_platform_suffix: "-cross"
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: macos
             needs_mingw: true
             mingw_variant: mingw
+            test_platform_suffix: "-cross"
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: windows
             needs_mingw: true
             mingw_variant: mingw
+            test_platform_suffix: "-cross"
     steps: *test_steps

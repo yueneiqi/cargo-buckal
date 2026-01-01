@@ -806,6 +806,9 @@ def cargo_manifest(*args, **kwargs):
 def glob(*args, **kwargs):
     return (glob.__name__, args, kwargs)
 
+def select(arg):
+    return arg
+
 def load(*args, **kwargs):
     pass
 

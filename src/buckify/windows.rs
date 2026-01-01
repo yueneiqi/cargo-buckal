@@ -1,4 +1,4 @@
-use std::vec;
+use std::{collections::BTreeSet as Set, vec};
 
 use starlark_syntax::codemap::{Pos, Span, Spanned};
 use starlark_syntax::syntax::ast::{
@@ -29,7 +29,35 @@ pub(super) fn patch_root_windows_rustc_flags(
         .map(|t| t.name.clone())
         .collect();
 
-    if bin_names.is_empty() {
+    let mut rust_test_names: Set<String> = ctx
+        .root
+        .targets
+        .iter()
+        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Test))
+        .map(|t| t.name.clone())
+        .collect();
+
+    let lib_targets: Vec<_> = ctx
+        .root
+        .targets
+        .iter()
+        .filter(|t| {
+            t.kind.contains(&cargo_metadata::TargetKind::Lib)
+                || t.kind.contains(&cargo_metadata::TargetKind::CDyLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::DyLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::RLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::StaticLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::ProcMacro)
+        })
+        .collect();
+
+    for lib_target in lib_targets {
+        if lib_target.test {
+            rust_test_names.insert(format!("{}-unittest", lib_target.name));
+        }
+    }
+
+    if bin_names.is_empty() && rust_test_names.is_empty() {
         return buck_content;
     }
 
@@ -40,7 +68,21 @@ pub(super) fn patch_root_windows_rustc_flags(
     }
 
     for bin_name in bin_names {
-        buck_content = apply_rustc_flags_patch_to_content(&buck_content, &bin_name, &select_expr);
+        buck_content = apply_rustc_flags_patch_to_content(
+            &buck_content,
+            "rust_binary",
+            &bin_name,
+            &select_expr,
+        );
+    }
+
+    for test_name in rust_test_names {
+        buck_content = apply_rustc_flags_patch_to_content(
+            &buck_content,
+            "rust_test",
+            &test_name,
+            &select_expr,
+        );
     }
 
     buck_content
@@ -249,6 +291,7 @@ fn write_string_literal(out: &mut String, s: &str) {
 
 fn apply_rustc_flags_patch_to_content(
     buck_content: &str,
+    rule_name: &str,
     bin_name: &str,
     select_expr: &str,
 ) -> String {
@@ -259,7 +302,8 @@ fn apply_rustc_flags_patch_to_content(
     };
 
     // Find the insertion point by walking the AST
-    let insert_pos = match find_rustc_flags_end_in_rust_binary(ast.statement(), bin_name) {
+    let insert_pos =
+        match find_rustc_flags_end_in_rule(ast.statement(), rule_name, bin_name) {
         Some(pos) => pos,
         None => return buck_content.to_owned(),
     };
@@ -273,28 +317,32 @@ fn apply_rustc_flags_patch_to_content(
     out
 }
 
-/// Walk the AST to find a `rust_binary` call with the given name and return the
+/// Walk the AST to find a rust rule call with the given name and return the
 /// byte position just after the closing `]` of its `rustc_flags` list.
-fn find_rustc_flags_end_in_rust_binary(stmt: &AstStmt, target_name: &str) -> Option<usize> {
+fn find_rustc_flags_end_in_rule(
+    stmt: &AstStmt,
+    rule_name: &str,
+    target_name: &str,
+) -> Option<usize> {
     match &stmt.node {
         Stmt::Statements(stmts) => {
             for s in stmts {
-                if let Some(pos) = find_rustc_flags_end_in_rust_binary(s, target_name) {
+                if let Some(pos) = find_rustc_flags_end_in_rule(s, rule_name, target_name) {
                     return Some(pos);
                 }
             }
             None
         }
-        Stmt::Expression(expr) => find_in_expr(expr, target_name),
+        Stmt::Expression(expr) => find_in_expr(expr, rule_name, target_name),
         _ => None,
     }
 }
 
-fn find_in_expr(expr: &AstExpr, target_name: &str) -> Option<usize> {
+fn find_in_expr(expr: &AstExpr, rule_name: &str, target_name: &str) -> Option<usize> {
     if let ExprP::Call(callee, args) = &expr.node {
-        // Check if this is a call to `rust_binary`
+        // Check if this is a call to a target rule
         if let ExprP::Identifier(ident) = &callee.node
-            && ident.node.ident == "rust_binary"
+            && ident.node.ident == rule_name
         {
             return find_rustc_flags_in_call(&args.args, target_name);
         }
@@ -425,7 +473,12 @@ mod tests {
             )
             "#};
 
-        let patched = apply_rustc_flags_patch_to_content(input, "bin", "select({\"DEFAULT\": []})");
+        let patched = apply_rustc_flags_patch_to_content(
+            input,
+            "rust_binary",
+            "bin",
+            "select({\"DEFAULT\": []})",
+        );
         assert_eq!(patched, expected);
     }
 
@@ -463,7 +516,55 @@ mod tests {
             )
             "#};
 
-        let patched = apply_rustc_flags_patch_to_content(input, "b", "select({\"DEFAULT\": []})");
+        let patched = apply_rustc_flags_patch_to_content(
+            input,
+            "rust_binary",
+            "b",
+            "select({\"DEFAULT\": []})",
+        );
+        assert_eq!(patched, expected);
+    }
+
+    #[test]
+    fn apply_rustc_flags_patch_to_content_patches_named_test_only() {
+        let input = indoc! {r#"
+            rust_binary(
+                name = "bin",
+                rustc_flags = [
+                    "binflag",
+                ],
+            )
+
+            rust_test(
+                name = "bin-unittest",
+                rustc_flags = [
+                    "testflag",
+                ],
+            )
+            "#};
+
+        let expected = indoc! {r#"
+            rust_binary(
+                name = "bin",
+                rustc_flags = [
+                    "binflag",
+                ],
+            )
+
+            rust_test(
+                name = "bin-unittest",
+                rustc_flags = [
+                    "testflag",
+                ] + select({"DEFAULT": []}),
+            )
+            "#};
+
+        let patched = apply_rustc_flags_patch_to_content(
+            input,
+            "rust_test",
+            "bin-unittest",
+            "select({\"DEFAULT\": []})",
+        );
         assert_eq!(patched, expected);
     }
 }
