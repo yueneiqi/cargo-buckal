@@ -16,7 +16,9 @@ use crate::{
     utils::{UnwrapOrExit, get_buck2_root, get_vendor_dir},
 };
 
-use super::{buckify_dep_node, buckify_root_node, gen_buck_content, vendor_package, windows};
+use super::{
+    buckify_dep_node, buckify_root_node, gen_buck_content, vendor_package, cross, windows,
+};
 
 impl BuckalChange {
     pub fn apply(&self, ctx: &BuckalContext) {
@@ -82,7 +84,8 @@ impl BuckalChange {
                         }
 
                         // Generate the BUCK file
-                        let buck_content = gen_buck_content(&buck_rules);
+                        let mut buck_content = gen_buck_content(&buck_rules);
+                        buck_content = cross::patch_rust_test_target_compatible_with(buck_content);
                         std::fs::write(&buck_path, buck_content)
                             .expect("Failed to write BUCK file");
                     }
@@ -149,6 +152,7 @@ pub fn flush_root(ctx: &BuckalContext) {
     // Generate the BUCK file
     let mut buck_content = gen_buck_content(&buck_rules);
     buck_content = windows::patch_root_windows_rustc_flags(buck_content, ctx);
+    buck_content = cross::patch_rust_test_target_compatible_with(buck_content);
     std::fs::write(&buck_path, buck_content).expect("Failed to write BUCK file");
 }
 
