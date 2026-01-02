@@ -23,6 +23,15 @@ Common commands:
 - `cargo buckal clean`: clean `buck-out` directory
 - `cargo buckal version`: print version information
 
+## Supported platforms
+
+Platform-aware dependency mapping and bundled sample platforms currently target these Rust tier-1
+host triples:
+
+- Linux: `x86_64-unknown-linux-gnu`, `i686-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+- Windows: `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu`, `i686-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+- macOS: `aarch64-apple-darwin`
+
 ## Multi-platform builds
 
 `cargo buckal migrate` preserves platform-conditional Cargo dependencies by emitting `os_deps`/`os_named_deps` and canonical OS constraints, so the same generated BUCK files can be built for different target platforms without regenerating on each host.
