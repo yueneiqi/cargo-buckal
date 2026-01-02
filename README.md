@@ -51,3 +51,9 @@ buck2_binary = "/path/to/your/buck2"
 ```
 
 If no configuration file exists, cargo-buckal will use `buck2` (searches your PATH).
+
+## Repos using cargo-buckal
+
+- `rk8s`: https://github.com/rk8s-dev/rk8s
+- `libra`: https://github.com/web3infra-foundation/libra
+- `git-internal`: https://github.com/web3infra-foundation/git-internal
