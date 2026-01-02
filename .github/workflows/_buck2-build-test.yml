@@ -112,49 +112,49 @@ jobs:
           - target: i686-pc-windows-msvc
             os: windows-2022
             gen_platform: linux
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
           - target: i686-pc-windows-msvc
             os: windows-2022
             gen_platform: macos
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
           - target: i686-pc-windows-msvc
             os: windows-2022
             gen_platform: windows
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
 
           # ========== i686-unknown-linux-gnu (ubuntu-24.04) ==========
           - target: i686-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: linux
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
           - target: i686-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: macos
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
           - target: i686-unknown-linux-gnu
             os: ubuntu-24.04
             gen_platform: windows
             setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
 
           # ========== x86_64-pc-windows-gnu (windows-2022) [no-mingw] ==========
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: linux
             mingw_variant: no-mingw
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: macos
             mingw_variant: no-mingw
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
           - target: x86_64-pc-windows-gnu
             os: windows-2022
             gen_platform: windows
             mingw_variant: no-mingw
-            test_platform_suffix: "-cross"
+            test_platform_suffix: ""
 
           # ========== x86_64-pc-windows-msvc (windows-2022) ==========
           - target: x86_64-pc-windows-msvc

@@ -20,7 +20,7 @@ on:
         default: false
   push:
     branches:
-      - test
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -34,7 +34,7 @@ jobs:
       clone_url: https://github.com/sharkdp/fd.git
       clone_ref: v10.3.0
 
-  test:
+  buck2_build_test:
     needs: generate_buck2_files
     uses: ./.github/workflows/_buck2-build-test.yml
     with:
