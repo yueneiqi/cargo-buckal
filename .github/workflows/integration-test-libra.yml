@@ -18,9 +18,6 @@ on:
         description: 'Enable x86_64-pc-windows-gnu MinGW jobs (manual only)'
         required: false
         default: false
-  push:
-    branches:
-      - test
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -35,7 +32,7 @@ jobs:
       clone_ref: main
       clean_existing_buck2_and_buckal: true
 
-  test:
+  buck2_build_test:
     needs: generate_buck2_files
     uses: ./.github/workflows/_buck2-build-test.yml
     with:

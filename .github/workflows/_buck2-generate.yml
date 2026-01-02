@@ -45,6 +45,11 @@ on:
         required: false
         type: boolean
         default: false
+      set_ignore_tests_false:
+        description: 'Ensure buckal.toml contains ignore_tests = false before generation'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   generate_buck2_files:
@@ -118,6 +123,16 @@ jobs:
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
           buck2 init
+
+      - name: Configure buckal.toml ignore_tests
+        if: inputs.set_ignore_tests_false
+        shell: bash
+        run: |
+          cd "${{ inputs.project_dir || inputs.project_name }}"
+          touch buckal.toml
+          if ! grep -q '^ignore_tests = false$' buckal.toml; then
+            echo 'ignore_tests = false' >> buckal.toml
+          fi
 
       - name: Generate Buck2 files
         shell: bash

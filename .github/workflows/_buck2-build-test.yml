@@ -56,6 +56,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
+      TEST_PLATFORM_SUFFIX: ${{ inputs.project_name == 'git-internal' && (matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'aarch64-pc-windows-msvc') && '-cross' || matrix.test_platform_suffix }}
     strategy:
       fail-fast: false
       matrix:
@@ -321,14 +322,14 @@ jobs:
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 test //... --target-platforms //platforms:${{ matrix.target }}${{ matrix.test_platform_suffix }} -c build.execution_platforms=//platforms:${{ matrix.exec_platform_override }}
+          buck2 test //... --target-platforms //platforms:${{ matrix.target }}${{ env.TEST_PLATFORM_SUFFIX }} -c build.execution_platforms=//platforms:${{ matrix.exec_platform_override }}
 
       - name: Buck2 test
         if: inputs.run_tests && matrix.exec_platform_override == ''
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 test //... --target-platforms //platforms:${{ matrix.target }}${{ matrix.test_platform_suffix }}
+          buck2 test //... --target-platforms //platforms:${{ matrix.target }}${{ env.TEST_PLATFORM_SUFFIX }}
 
   test-mingw:
     name: ${{ matrix.target }} / ${{ matrix.gen_platform }}-gen (${{ matrix.os }})${{ matrix.mingw_variant && format(' [{0}]', matrix.mingw_variant) || '' }}
