@@ -215,6 +215,17 @@ jobs:
           path: ${{ inputs.project_dir || inputs.project_name }}
 
       # ============================================================
+      # Git LFS (git-internal Windows MSVC)
+      # ============================================================
+      - name: Fetch Git LFS objects
+        if: inputs.project_name == 'git-internal' && (matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'aarch64-pc-windows-msvc')
+        shell: bash
+        run: |
+          cd "${{ inputs.project_dir || inputs.project_name }}"
+          git lfs install --local
+          git lfs pull
+
+      # ============================================================
       # Install cross-compilation prerequisites
       # ============================================================
       - name: Install cross prerequisites
