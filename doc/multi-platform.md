@@ -10,6 +10,15 @@
 
 The generated rules use canonical Buck prelude OS constraint labels: `prelude//os/constraints:{linux,macos,windows}`.
 
+## Supported platforms
+
+Platform-aware dependency mapping and bundled sample platforms currently target these Rust tier-1
+host triples:
+
+- Linux: `x86_64-unknown-linux-gnu`, `i686-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+- Windows: `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu`, `i686-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+- macOS: `aarch64-apple-darwin`
+
 ## How platform matching works
 
 Cargo encodes target-specific dependencies in `cargo metadata` as platform predicates (for example, `cfg(target_os = "windows")`). During `migrate`, cargo-buckal maps those predicates to a set of OS keys (`linux`/`macos`/`windows`) by evaluating them against cached `rustc --print=cfg --target <triple>` snapshots for Rust Tier-1 host targets.
@@ -69,6 +78,22 @@ If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal trea
    ```bash
    buck2 build //... --target-platforms //platforms:aarch64-apple-darwin
    ```
+
+### Cross target platforms (`*-cross`)
+
+The bundled `//platforms:*` targets also include `*-cross` variants (for example,
+`//platforms:x86_64-unknown-linux-gnu-cross`). These platforms add the
+`//platforms:cross` constraint, which cargo-buckal uses to mark generated
+`rust_test` targets as incompatible so `buck2 test` will skip them. Use the
+`*-cross` platforms when cross-compiling or when the target binaries cannot run
+on the host.
+
+Examples:
+
+```bash
+buck2 build //... --target-platforms //platforms:x86_64-unknown-linux-gnu-cross
+buck2 build //... --target-platforms //platforms:aarch64-pc-windows-msvc-cross
+```
 
 ## Troubleshooting
 
