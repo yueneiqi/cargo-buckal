@@ -15,16 +15,6 @@ platform(
     visibility = ["PUBLIC"],
 )
 
-platform(
-    name = "aarch64-apple-darwin-cross",
-    constraint_values = [
-        "prelude//os/constraints:macos",
-        "prelude//cpu/constraints:arm64",
-        ":cross_value",
-    ],
-    visibility = ["PUBLIC"],
-)
-
 # NOTE: This target uses execution_platform() instead of platform() due to
 # cross-compilation requirements on Windows ARM hosts. When building
 # aarch64-pc-windows-msvc on Windows ARM systems, Buck's execution platform
@@ -41,33 +31,11 @@ execution_platform(
 )
 
 platform(
-    name = "aarch64-pc-windows-msvc-cross",
-    constraint_values = [
-        "prelude//os/constraints:windows",
-        "prelude//cpu/constraints:arm64",
-        "prelude//abi/constraints:msvc",
-        ":cross_value",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
     name = "x86_64-pc-windows-msvc",
     constraint_values = [
         "prelude//os/constraints:windows",
         "prelude//cpu/constraints:x86_64",
         "prelude//abi/constraints:msvc",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
-    name = "x86_64-pc-windows-msvc-cross",
-    constraint_values = [
-        "prelude//os/constraints:windows",
-        "prelude//cpu/constraints:x86_64",
-        "prelude//abi/constraints:msvc",
-        ":cross_value",
     ],
     visibility = ["PUBLIC"],
 )
@@ -83,33 +51,11 @@ platform(
 )
 
 platform(
-    name = "i686-pc-windows-msvc-cross",
-    constraint_values = [
-        "prelude//os/constraints:windows",
-        "prelude//cpu/constraints:x86_32",
-        "prelude//abi/constraints:msvc",
-        ":cross_value",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
     name = "x86_64-pc-windows-gnu",
     constraint_values = [
         "prelude//os/constraints:windows",
         "prelude//cpu/constraints:x86_64",
         "prelude//abi/constraints:gnu",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
-    name = "x86_64-pc-windows-gnu-cross",
-    constraint_values = [
-        "prelude//os/constraints:windows",
-        "prelude//cpu/constraints:x86_64",
-        "prelude//abi/constraints:gnu",
-        ":cross_value",
     ],
     visibility = ["PUBLIC"],
 )
@@ -125,33 +71,11 @@ platform(
 )
 
 platform(
-    name = "aarch64-unknown-linux-gnu-cross",
-    constraint_values = [
-        "prelude//os/constraints:linux",
-        "prelude//cpu/constraints:arm64",
-        "prelude//abi/constraints:gnu",
-        ":cross_value",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
     name = "x86_64-unknown-linux-gnu",
     constraint_values = [
         "prelude//os/constraints:linux",
         "prelude//cpu/constraints:x86_64",
         "prelude//abi/constraints:gnu",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
-    name = "x86_64-unknown-linux-gnu-cross",
-    constraint_values = [
-        "prelude//os/constraints:linux",
-        "prelude//cpu/constraints:x86_64",
-        "prelude//abi/constraints:gnu",
-        ":cross_value",
     ],
     visibility = ["PUBLIC"],
 )
@@ -166,32 +90,11 @@ platform(
     visibility = ["PUBLIC"],
 )
 
-platform(
-    name = "i686-unknown-linux-gnu-cross",
-    constraint_values = [
-        "prelude//os/constraints:linux",
-        "prelude//cpu/constraints:x86_32",
-        "prelude//abi/constraints:gnu",
-        ":cross_value",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-constraint_setting(
-    name = "cross_setting",
-)
-
-constraint_value(
-    name = "cross_value",
-    constraint_setting = ":cross_setting",
-    visibility = ["PUBLIC"],
-)
-
 config_setting(
     name = "cross",
-    constraint_values = [
-        ":cross_value",
-    ],
+    values = {
+        "cross.skip_test": "true",
+    },
     visibility = ["PUBLIC"],
 )
 

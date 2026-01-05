@@ -79,20 +79,18 @@ If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal trea
    buck2 build //... --target-platforms //platforms:aarch64-apple-darwin
    ```
 
-### Cross target platforms (`*-cross`)
+### Skipping tests for cross-compilation
 
-The bundled `//platforms:*` targets also include `*-cross` variants (for example,
-`//platforms:x86_64-unknown-linux-gnu-cross`). These platforms add the
-`//platforms:cross` constraint, which cargo-buckal uses to mark generated
-`rust_test` targets as incompatible so `buck2 test` will skip them. Use the
-`*-cross` platforms when cross-compiling or when the target binaries cannot run
-on the host.
+When cross-compiling or when the target binaries cannot run on the host, you can
+skip `rust_test` targets by passing `-c cross.skip_test=true`. cargo-buckal
+marks generated `rust_test` targets with a `target_compatible_with` constraint
+that matches the `//platforms:cross` config setting when this config is set.
 
 Examples:
 
 ```bash
-buck2 build //... --target-platforms //platforms:x86_64-unknown-linux-gnu-cross
-buck2 build //... --target-platforms //platforms:aarch64-pc-windows-msvc-cross
+buck2 test //... --target-platforms //platforms:x86_64-unknown-linux-gnu -c cross.skip_test=true
+buck2 test //... --target-platforms //platforms:aarch64-pc-windows-msvc -c cross.skip_test=true
 ```
 
 ## Troubleshooting
