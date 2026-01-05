@@ -14,8 +14,6 @@ pub struct BuckalContext {
     // whether to skip merging manual changes in BUCK files
     pub no_merge: bool,
     pub separate: bool,
-    // whether to generate BUCK files only for supported platforms
-    pub supported_platform_only: bool,
     // repository configuration
     pub repo_config: RepoConfig,
 }
@@ -53,7 +51,6 @@ impl BuckalContext {
             workspace_root: cargo_metadata.workspace_root.clone(),
             no_merge: false,
             separate: false,
-            supported_platform_only: false,
             repo_config,
         }
     }

@@ -31,9 +31,6 @@ pub struct MigrateArgs {
     /// Process first-party crates separately
     #[clap(long)]
     pub separate: bool,
-    /// Only generate BUCK files for supported platforms
-    #[clap(long)]
-    pub supported_platform_only: bool,
 }
 
 pub fn execute(args: &MigrateArgs) {
@@ -49,7 +46,6 @@ pub fn execute(args: &MigrateArgs) {
     let mut ctx = BuckalContext::new();
     ctx.no_merge = !args.merge;
     ctx.separate = args.separate;
-    ctx.supported_platform_only = args.supported_platform_only;
 
     // Fetch latest bundles if requested
     if args.fetch {

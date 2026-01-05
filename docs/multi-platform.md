@@ -23,7 +23,7 @@ host triples:
 
 Cargo encodes target-specific dependencies in `cargo metadata` as platform predicates (for example, `cfg(target_os = "windows")`). During `migrate`, cargo-buckal maps those predicates to a set of OS keys (`linux`/`macos`/`windows`) by evaluating them against cached `rustc --print=cfg --target <triple>` snapshots for Rust Tier-1 host targets.
 
-If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal treats the dependency as unconditional by default (to preserve build success). If you prefer dropping deps that only target unsupported platforms, use `--supported-platform-only`.
+If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal treats the dependency as unconditional by default (to preserve build success).
 
 ## Using it
 
@@ -98,5 +98,5 @@ buck2 build //... --target-platforms //platforms:aarch64-pc-windows-msvc-cross
 ## Troubleshooting
 
 - If you see warnings about `rustc --print=cfg --target ...` failing, install the missing Rust targets (or expect fewer platform predicates to be mapped).
-- If OS-specific deps appear in the default `deps` list, the corresponding predicate likely couldn’t be mapped; rerun with more Rust targets installed or with `--supported-platform-only` (if dropping unsupported-only deps is acceptable).
+- If OS-specific deps appear in the default `deps` list, the corresponding predicate likely couldn’t be mapped; rerun with more Rust targets installed.
 - If Buck2 fails to parse generated BUCK files due to missing support for `os_deps`/`os_named_deps` (or missing symbols like `rust_test` in `wrapper.bzl`), update the Buckal bundles (try `cargo buckal migrate --fetch`) or pin a bundles revision that supports these attributes.
