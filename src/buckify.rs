@@ -1,8 +1,8 @@
 mod actions;
+mod cross;
 mod deps;
 mod emit;
 mod rules;
-mod cross;
 mod windows;
 
 pub use actions::flush_root;

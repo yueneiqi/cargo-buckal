@@ -1,7 +1,7 @@
 use starlark_syntax::codemap::Span;
 use starlark_syntax::syntax::ast::{ArgumentP, AstExpr, AstNoPayload, AstStmt, ExprP, Stmt};
-use starlark_syntax::syntax::{AstModule, Dialect};
 use starlark_syntax::syntax::module::AstModuleFields;
+use starlark_syntax::syntax::{AstModule, Dialect};
 
 const CROSS_SELECT_EXPR: &str =
     "select({\"//platforms:cross\": [\"config//:none\"], \"DEFAULT\": []})";

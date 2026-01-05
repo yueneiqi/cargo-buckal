@@ -5,8 +5,8 @@ use clap::Parser;
 use crate::{
     RUST_CRATES_ROOT,
     assets::extract_buck2_assets,
-    buckal_error,
     buck2::Buck2Command,
+    buckal_error,
     buckify::flush_root,
     bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier},
     cache::BuckalCache,
@@ -64,7 +64,9 @@ pub fn execute(args: &MigrateArgs) {
         let toolchains_dir = cwd.join("toolchains");
         let platforms_dir = cwd.join("platforms");
         if toolchains_dir.is_dir() || platforms_dir.is_dir() {
-            buckal_error!("`toolchains/` or `platforms/` directory already exists. Please delete them first.");
+            buckal_error!(
+                "`toolchains/` or `platforms/` directory already exists. Please delete them first."
+            );
             std::process::exit(1);
         }
 

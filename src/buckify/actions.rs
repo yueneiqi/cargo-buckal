@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::{
-    buckify_dep_node, buckify_root_node, gen_buck_content, vendor_package, cross, windows,
+    buckify_dep_node, buckify_root_node, cross, gen_buck_content, vendor_package, windows,
 };
 
 impl BuckalChange {

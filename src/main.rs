@@ -1,7 +1,7 @@
+mod assets;
 mod buck;
 mod buck2;
 mod buckify;
-mod assets;
 mod bundles;
 mod cache;
 mod cli;

@@ -210,9 +210,7 @@ fn cfg_is_target_only(cfg: &Cfg) -> bool {
 fn cfg_expr_is_target_only(expr: &CfgExpr) -> bool {
     match expr {
         CfgExpr::Not(inner) => cfg_expr_is_target_only(inner),
-        CfgExpr::All(items) | CfgExpr::Any(items) => {
-            items.iter().all(cfg_expr_is_target_only)
-        }
+        CfgExpr::All(items) | CfgExpr::Any(items) => items.iter().all(cfg_expr_is_target_only),
         CfgExpr::Value(cfg) => cfg_is_target_only(cfg),
         CfgExpr::True | CfgExpr::False => false,
     }

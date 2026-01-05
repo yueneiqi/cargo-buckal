@@ -100,7 +100,10 @@ impl BuckConfig {
     pub fn insert_comment_before_key(&mut self, section: &str, key: &str, comment: &str) {
         if let Some(lines) = self.raw_sections.get_mut(section) {
             let key_pattern = format!("{} = ", key);
-            if let Some(pos) = lines.iter().position(|line| line.trim_start().starts_with(&key_pattern)) {
+            if let Some(pos) = lines
+                .iter()
+                .position(|line| line.trim_start().starts_with(&key_pattern))
+            {
                 let indent = lines[pos].len() - lines[pos].trim_start().len();
                 let indent_str = &lines[pos][..indent];
                 lines.insert(pos, format!("{}# {}", indent_str, comment));
@@ -121,10 +124,7 @@ impl BuckConfig {
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 let section_name = trimmed[1..trimmed.len() - 1].to_string();
                 config.section_order.push(section_name.clone());
-                config
-                    .raw_sections
-                    .entry(section_name.clone())
-                    .or_default();
+                config.raw_sections.entry(section_name.clone()).or_default();
                 current_section = Some(section_name);
             } else if let Some(section) = &current_section {
                 if !trimmed.is_empty()
@@ -160,11 +160,10 @@ impl BuckConfig {
                         output.push('\n');
                     }
                     let last_non_empty = lines.iter().rev().find(|line| !line.trim().is_empty());
-                    let ends_with_comment = last_non_empty
-                        .map_or(false, |line| {
-                            let trimmed = line.trim();
-                            trimmed.starts_with('#') || trimmed.starts_with(';')
-                        });
+                    let ends_with_comment = last_non_empty.map_or(false, |line| {
+                        let trimmed = line.trim();
+                        trimmed.starts_with('#') || trimmed.starts_with(';')
+                    });
                     let last_blank = lines.last().map_or(false, |line| line.trim().is_empty());
                     if !last_blank && !ends_with_comment {
                         output.push('\n');
@@ -237,7 +236,11 @@ pub fn init_buckal_cell(dest: &std::path::Path) -> Result<()> {
     let mut buckconfig = BuckConfig::load(&dest.join(".buckconfig"))?;
     buckconfig.upsert_kv("cells", "buckal", "buckal");
     buckconfig.append_kv("external_cells", "buckal", "git");
-    buckconfig.insert_comment_before_key("external_cells", "buckal", "Added by cargo-buckal. See [external_cell_buckal] for git configuration.");
+    buckconfig.insert_comment_before_key(
+        "external_cells",
+        "buckal",
+        "Added by cargo-buckal. See [external_cell_buckal] for git configuration.",
+    );
     buckconfig.ensure_section_after("external_cells", "external_cell_buckal");
     buckconfig.clear_section("external_cell_buckal");
     buckconfig.upsert_kv(
@@ -356,7 +359,11 @@ mod tests {
 
         config.upsert_kv("cells", "buckal", "buckal");
         config.clear_section("external_cell_buckal");
-        config.upsert_kv("external_cell_buckal", "git_origin", "https://example.com/repo");
+        config.upsert_kv(
+            "external_cell_buckal",
+            "git_origin",
+            "https://example.com/repo",
+        );
         config.upsert_kv("external_cell_buckal", "commit_hash", "deadbeef");
 
         let output = config.serialize();
@@ -437,7 +444,11 @@ mod tests {
         "#};
         let mut config = BuckConfig::parse(contents.trim_end().to_string());
         config.append_kv("external_cells", "buckal", "git");
-        config.insert_comment_before_key("external_cells", "buckal", "buckal cell for cargo-buckal");
+        config.insert_comment_before_key(
+            "external_cells",
+            "buckal",
+            "buckal cell for cargo-buckal",
+        );
         let output = config.serialize();
         let expected = indoc! {r#"
             [external_cells]

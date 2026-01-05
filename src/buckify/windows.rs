@@ -302,8 +302,7 @@ fn apply_rustc_flags_patch_to_content(
     };
 
     // Find the insertion point by walking the AST
-    let insert_pos =
-        match find_rustc_flags_end_in_rule(ast.statement(), rule_name, bin_name) {
+    let insert_pos = match find_rustc_flags_end_in_rule(ast.statement(), rule_name, bin_name) {
         Some(pos) => pos,
         None => return buck_content.to_owned(),
     };
