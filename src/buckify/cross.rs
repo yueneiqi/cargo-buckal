@@ -49,15 +49,14 @@ fn collect_rust_test_insert_positions(stmt: &AstStmt, out: &mut Vec<usize>) {
 }
 
 fn find_rust_test_call(expr: &AstExpr) -> Option<usize> {
-    if let ExprP::Call(callee, args) = &expr.node {
-        if let ExprP::Identifier(ident) = &callee.node
-            && ident.node.ident == "rust_test"
-        {
-            if call_has_arg(&args.args, "target_compatible_with") {
-                return None;
-            }
-            return insert_pos_before_closing_paren(expr.span);
+    if let ExprP::Call(callee, args) = &expr.node
+        && let ExprP::Identifier(ident) = &callee.node
+        && ident.node.ident == "rust_test"
+    {
+        if call_has_arg(&args.args, "target_compatible_with") {
+            return None;
         }
+        return insert_pos_before_closing_paren(expr.span);
     }
     None
 }

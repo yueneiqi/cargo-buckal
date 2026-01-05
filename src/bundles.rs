@@ -160,11 +160,11 @@ impl BuckConfig {
                         output.push('\n');
                     }
                     let last_non_empty = lines.iter().rev().find(|line| !line.trim().is_empty());
-                    let ends_with_comment = last_non_empty.map_or(false, |line| {
+                    let ends_with_comment = last_non_empty.is_some_and(|line| {
                         let trimmed = line.trim();
                         trimmed.starts_with('#') || trimmed.starts_with(';')
                     });
-                    let last_blank = lines.last().map_or(false, |line| line.trim().is_empty());
+                    let last_blank = lines.last().is_some_and(|line| line.trim().is_empty());
                     if !last_blank && !ends_with_comment {
                         output.push('\n');
                     }
