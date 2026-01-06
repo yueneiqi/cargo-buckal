@@ -25,7 +25,13 @@ fn extract_dir(dest: &Path, dir: &Dir) -> io::Result<()> {
                 extract_dir(dest, sub_dir)?;
             }
             DirEntry::File(file) => {
-                let target_path = dest.join(file.path());
+                let mut target_path = dest.join(file.path());
+                // Rename BUCK.template to BUCK during extraction.
+                // We use .template extension in source to avoid Buck2 package boundaries
+                // which would prevent glob from including these files in the vendor output.
+                if target_path.file_name() == Some(std::ffi::OsStr::new("BUCK.template")) {
+                    target_path.set_file_name("BUCK");
+                }
                 if let Some(parent) = target_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
