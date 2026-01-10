@@ -33,6 +33,8 @@ jobs:
       project_name: fd
       clone_url: https://github.com/sharkdp/fd.git
       clone_ref: v10.3.0
+      set_ignore_tests_false: true
+      apply_patches: true
 
   buck2_build_test:
     needs: generate_buck2_files

@@ -50,6 +50,11 @@ on:
         required: false
         type: boolean
         default: false
+      apply_patches:
+        description: 'Apply patches from .github/patches/{project_name}/ after generation'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   generate_buck2_files:
@@ -140,6 +145,33 @@ jobs:
           cd "${{ inputs.project_dir || inputs.project_name || 'cargo-buckal' }}"
           rm -rf toolchains platforms
           cargo buckal migrate --buck2
+
+      - name: Apply patches
+        if: inputs.apply_patches
+        shell: bash
+        run: |
+          cd "${{ inputs.project_dir || inputs.project_name }}"
+          PATCH_DIR="../cargo-buckal/.github/patches/${{ inputs.project_name }}"
+          if [[ -d "$PATCH_DIR" ]]; then
+            echo "Applying patches from $PATCH_DIR"
+            # Apply .patch files
+            for patch in "$PATCH_DIR"/*.patch; do
+              if [[ -f "$patch" ]]; then
+                echo "Applying patch: $patch"
+                git apply "$patch" || patch -p1 < "$patch"
+              fi
+            done
+            # Run .sh scripts
+            for script in "$PATCH_DIR"/*.sh; do
+              if [[ -f "$script" ]]; then
+                echo "Running script: $script"
+                chmod +x "$script"
+                bash "$script"
+              fi
+            done
+          else
+            echo "No patches directory found at $PATCH_DIR"
+          fi
 
       - name: Upload generated tree
         uses: actions/upload-artifact@v4

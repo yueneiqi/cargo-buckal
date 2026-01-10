@@ -1,0 +1,42 @@
+--- a/tests/testenv/mod.rs
++++ b/tests/testenv/mod.rs
+@@ -74,6 +74,18 @@
+
+ /// Find the *fd* executable.
+ fn find_fd_exe() -> PathBuf {
++    // Check FD_EXE environment variable first (for Buck2 with explicit path)
++    if let Ok(path) = env::var("FD_EXE") {
++        let path = PathBuf::from(&path);
++        // Canonicalize to get absolute path (Buck2 uses relative paths)
++        if let Ok(abs_path) = path.canonicalize() {
++            return abs_path;
++        }
++        if path.exists() {
++            return path;
++        }
++    }
++
+     // Tests exe is in target/debug/deps, the *fd* exe is in target/debug
+     let root = env::current_exe()
+         .expect("tests executable")
+@@ -85,7 +97,19 @@
+
+     let exe_name = if cfg!(windows) { "fd.exe" } else { "fd" };
+
+-    root.join(exe_name)
++    // Try Cargo layout first (target/debug/fd)
++    let cargo_path = root.join(exe_name);
++    if cargo_path.exists() {
++        return cargo_path;
++    }
++
++    // Try Buck2 layout (__fd__/fd relative to test binary's parent)
++    let buck2_path = root.join("__fd__").join(exe_name);
++    if buck2_path.exists() {
++        return buck2_path;
++    }
++
++    cargo_path
+ }
+
+ /// Format an error message for when *fd* did not exit successfully.
