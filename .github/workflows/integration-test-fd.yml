@@ -31,6 +31,12 @@ jobs:
       set_ignore_tests_false: true
       apply_patches: true
 
+  verify_cross_platform:
+    needs: generate_buck2_files
+    uses: ./.github/workflows/_buck2-verify-cross-platform.yml
+    with:
+      project_name: fd
+
   buck2_build_test:
     needs: generate_buck2_files
     uses: ./.github/workflows/_buck2-build-test.yml

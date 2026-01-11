@@ -26,6 +26,12 @@ jobs:
       clone_ref: main
       clean_existing_buck2_and_buckal: true
 
+  verify_cross_platform:
+    needs: generate_buck2_files
+    uses: ./.github/workflows/_buck2-verify-cross-platform.yml
+    with:
+      project_name: libra
+
   buck2_build_test:
     needs: generate_buck2_files
     uses: ./.github/workflows/_buck2-build-test.yml

@@ -23,7 +23,12 @@ jobs:
     uses: ./.github/workflows/_buck2-generate.yml
     with:
       project_name: cargo-buckal
-      # No clone_url means self-test (uses checkout)
+
+  verify_cross_platform:
+    needs: generate_buck2_files
+    uses: ./.github/workflows/_buck2-verify-cross-platform.yml
+    with:
+      project_name: cargo-buckal
 
   buck2_build_test:
     needs: generate_buck2_files
@@ -31,5 +36,5 @@ jobs:
     with:
       project_name: cargo-buckal
       build_target: //...
-      run_tests: false  # cargo-buckal only builds, no tests
+      run_tests: false
       debug_enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled || false }}
