@@ -6,6 +6,21 @@ use include_dir::{Dir, DirEntry, include_dir};
 static TOOLCHAINS_ASSET: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets/toolchains");
 static PLATFORMS_ASSET: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets/platforms");
 
+fn normalize_line_endings(bytes: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+            result.push(b'\n');
+            i += 2;
+        } else {
+            result.push(bytes[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 pub fn extract_buck2_assets(dest: &Path) -> io::Result<()> {
     let toolchains_root = dest.join("toolchains");
     let platforms_root = dest.join("platforms");
@@ -35,7 +50,11 @@ fn extract_dir(dest: &Path, dir: &Dir) -> io::Result<()> {
                 if let Some(parent) = target_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(target_path, file.contents())?;
+                // Normalize line endings to LF for cross-platform consistency.
+                // When compiled on Windows, embedded files may have CRLF endings
+                // from git checkout, causing generated files to differ across platforms.
+                let contents = normalize_line_endings(file.contents());
+                std::fs::write(target_path, contents)?;
             }
         }
     }
