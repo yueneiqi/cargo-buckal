@@ -34,11 +34,6 @@ on:
         required: false
         type: boolean
         default: false
-      enable_mingw_jobs:
-        description: 'Enable x86_64-pc-windows-gnu MinGW jobs'
-        required: false
-        type: boolean
-        default: false
       buck2_rev:
         description: 'Buck2 git revision to install'
         required: false
@@ -52,7 +47,7 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.target }} ${{ matrix.gen_platform }}-gen (${{ matrix.os }})${{ matrix.mingw_variant && format(' [{0}]', matrix.mingw_variant) || '' }}
+    name: ${{ matrix.target }} ${{ matrix.gen_platform }}-gen (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
       MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
@@ -70,76 +65,6 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
             gen_platform: windows
-
-          # ========== aarch64-pc-windows-msvc (windows-11-arm) ==========
-          - target: aarch64-pc-windows-msvc
-            os: windows-11-arm
-            gen_platform: linux
-            exec_platform_override: "aarch64-pc-windows-msvc"
-          - target: aarch64-pc-windows-msvc
-            os: windows-11-arm
-            gen_platform: macos
-            exec_platform_override: "aarch64-pc-windows-msvc"
-          - target: aarch64-pc-windows-msvc
-            os: windows-11-arm
-            gen_platform: windows
-            exec_platform_override: "aarch64-pc-windows-msvc"
-
-          # ========== aarch64-unknown-linux-gnu (ubuntu-24.04) ==========
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: linux
-            setup: sudo apt-get -y update && sudo apt-get -y install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            skip_test: true
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: macos
-            setup: sudo apt-get -y update && sudo apt-get -y install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            skip_test: true
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: windows
-            setup: sudo apt-get -y update && sudo apt-get -y install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            skip_test: true
-
-          # ========== i686-pc-windows-msvc (windows-2022) ==========
-          - target: i686-pc-windows-msvc
-            os: windows-2022
-            gen_platform: linux
-          - target: i686-pc-windows-msvc
-            os: windows-2022
-            gen_platform: macos
-          - target: i686-pc-windows-msvc
-            os: windows-2022
-            gen_platform: windows
-
-          # ========== i686-unknown-linux-gnu (ubuntu-24.04) ==========
-          - target: i686-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: linux
-            setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
-          - target: i686-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: macos
-            setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
-          - target: i686-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: windows
-            setup: sudo apt-get -y update && sudo apt-get -y install gcc-i686-linux-gnu g++-i686-linux-gnu
-
-          # ========== x86_64-pc-windows-gnu (windows-2022) [no-mingw] ==========
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: linux
-            mingw_variant: no-mingw
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: macos
-            mingw_variant: no-mingw
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: windows
-            mingw_variant: no-mingw
 
           # ========== x86_64-pc-windows-msvc (windows-2022) ==========
           - target: x86_64-pc-windows-msvc
@@ -163,7 +88,7 @@ jobs:
             os: ubuntu-24.04
             gen_platform: windows
 
-    steps: &test_steps
+    steps:
       - name: Set cargo target dir
         shell: bash
         run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> "$GITHUB_ENV"
@@ -193,33 +118,6 @@ jobs:
           path: ${{ inputs.project_dir || inputs.project_name }}
 
       # ============================================================
-      # Install cross-compilation prerequisites
-      # ============================================================
-      - name: Install cross prerequisites
-        if: matrix.setup != ''
-        shell: bash
-        run: ${{ matrix.setup }}
-
-      # ============================================================
-      # MSYS2/MinGW setup for windows-gnu targets
-      # ============================================================
-      - name: Install MSYS2/MinGW (Windows GNU)
-        if: matrix.needs_mingw == true
-        id: msys2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-toolchain
-
-      - name: Add MinGW to PATH
-        if: matrix.needs_mingw == true
-        shell: pwsh
-        run: |
-          "${{ steps.msys2.outputs.msys2-location }}\\mingw64\\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-
-      # ============================================================
       # Rust toolchain setup
       # ============================================================
       - name: Setup Rust toolchains
@@ -227,13 +125,6 @@ jobs:
         with:
           nightly_toolchain: ${{ inputs.nightly_toolchain }}
           targets: ${{ matrix.target }}
-
-      - name: Install windows-gnu toolchain
-        if: matrix.needs_mingw == true
-        shell: bash
-        run: |
-          rustup toolchain install stable-x86_64-pc-windows-gnu
-          rustup target add --toolchain stable x86_64-pc-windows-gnu
 
       # ============================================================
       # Caching
@@ -271,22 +162,7 @@ jobs:
       # ============================================================
       # Buck2 build
       # ============================================================
-      - name: Setup tmate session (debug)
-        if: ${{ inputs.debug_enabled && matrix.target == 'x86_64-pc-windows-gnu' && matrix.gen_platform == 'windows' && matrix.mingw_variant == 'mingw' }}
-        uses: mxschmitt/action-tmate@v3
-        with:
-          limit-access-to-actor: true
-          msys2-location: ${{ steps.msys2.outputs.msys2-location }}
-
-      - name: Buck2 build (with exec platform override)
-        if: matrix.exec_platform_override != ''
-        shell: bash
-        run: |
-          cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 build ${{ inputs.build_target }} --target-platforms //platforms:${{ matrix.target }} -c build.execution_platforms=//platforms:${{ matrix.exec_platform_override }}
-
       - name: Buck2 build
-        if: matrix.exec_platform_override == ''
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
@@ -295,47 +171,9 @@ jobs:
       # ============================================================
       # Buck2 test
       # ============================================================
-      - name: Buck2 test (with exec platform override)
-        if: inputs.run_tests && matrix.exec_platform_override != ''
-        shell: bash
-        run: |
-          cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 test //... --target-platforms //platforms:${{ matrix.target }} -c build.execution_platforms=//platforms:${{ matrix.exec_platform_override }}${{ matrix.skip_test && ' -c cross.skip_test=true' || '' }}
-
       - name: Buck2 test
-        if: inputs.run_tests && matrix.exec_platform_override == ''
+        if: inputs.run_tests
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
-          buck2 test //... --target-platforms //platforms:${{ matrix.target }}${{ matrix.skip_test && ' -c cross.skip_test=true' || '' }}
-
-  test-mingw:
-    name: ${{ matrix.target }} / ${{ matrix.gen_platform }}-gen (${{ matrix.os }})${{ matrix.mingw_variant && format(' [{0}]', matrix.mingw_variant) || '' }}
-    runs-on: ${{ matrix.os }}
-    env:
-      MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
-    if: ${{ inputs.enable_mingw_jobs }}
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: linux
-            needs_mingw: true
-            mingw_variant: mingw
-            skip_test: true
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: macos
-            needs_mingw: true
-            mingw_variant: mingw
-            skip_test: true
-          - target: x86_64-pc-windows-gnu
-            os: windows-2022
-            gen_platform: windows
-            needs_mingw: true
-            mingw_variant: mingw
-            skip_test: true
-    steps: *test_steps
+          buck2 test //... --target-platforms //platforms:${{ matrix.target }}

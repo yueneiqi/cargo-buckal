@@ -15,8 +15,8 @@ The generated rules use canonical Buck prelude OS constraint labels: `prelude//o
 Platform-aware dependency mapping and bundled sample platforms currently target these Rust tier-1
 host triples:
 
-- Linux: `x86_64-unknown-linux-gnu`, `i686-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
-- Windows: `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu`, `i686-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+- Linux: `x86_64-unknown-linux-gnu`
+- Windows: `x86_64-pc-windows-msvc`
 - macOS: `aarch64-apple-darwin`
 
 ## How platform matching works
@@ -60,17 +60,12 @@ If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal trea
 
    ```bash
    buck2 build //... --target-platforms //platforms:x86_64-unknown-linux-gnu
-   buck2 build //... --target-platforms //platforms:i686-unknown-linux-gnu
-   buck2 build //... --target-platforms //platforms:aarch64-unknown-linux-gnu
    ```
 
    Windows:
 
    ```bash
    buck2 build //... --target-platforms //platforms:x86_64-pc-windows-msvc
-   buck2 build //... --target-platforms //platforms:i686-pc-windows-msvc
-   buck2 build //... --target-platforms //platforms:aarch64-pc-windows-msvc
-   buck2 build //... --target-platforms //platforms:x86_64-pc-windows-gnu
    ```
 
    macOS (bundled sample platforms):
@@ -90,7 +85,7 @@ Examples:
 
 ```bash
 buck2 test //... --target-platforms //platforms:x86_64-unknown-linux-gnu -c cross.skip_test=true
-buck2 test //... --target-platforms //platforms:aarch64-pc-windows-msvc -c cross.skip_test=true
+buck2 test //... --target-platforms //platforms:x86_64-pc-windows-msvc -c cross.skip_test=true
 ```
 
 ## Troubleshooting

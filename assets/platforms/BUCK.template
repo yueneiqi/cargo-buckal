@@ -15,21 +15,6 @@ platform(
     visibility = ["PUBLIC"],
 )
 
-# NOTE: This target uses execution_platform() instead of platform() due to
-# cross-compilation requirements on Windows ARM hosts. When building
-# aarch64-pc-windows-msvc on Windows ARM systems, Buck's execution platform
-# resolution requires explicit configuration to properly handle the toolchain
-# selection and execution environment. This is different from other targets
-# which can rely on Buck's default platform resolution. See CI configuration
-# and Buck documentation for execution_platform vs platform usage patterns.
-execution_platform(
-    name = "aarch64-pc-windows-msvc",
-    cpu_configuration = "prelude//cpu:arm64",
-    os_configuration = "//platforms:windows-msvc",
-    use_windows_path_separators = True,
-    visibility = ["PUBLIC"],
-)
-
 platform(
     name = "x86_64-pc-windows-msvc",
     constraint_values = [
@@ -41,50 +26,10 @@ platform(
 )
 
 platform(
-    name = "i686-pc-windows-msvc",
-    constraint_values = [
-        "prelude//os/constraints:windows",
-        "prelude//cpu/constraints:x86_32",
-        "prelude//abi/constraints:msvc",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
-    name = "x86_64-pc-windows-gnu",
-    constraint_values = [
-        "prelude//os/constraints:windows",
-        "prelude//cpu/constraints:x86_64",
-        "prelude//abi/constraints:gnu",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
-    name = "aarch64-unknown-linux-gnu",
-    constraint_values = [
-        "prelude//os/constraints:linux",
-        "prelude//cpu/constraints:arm64",
-        "prelude//abi/constraints:gnu",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
     name = "x86_64-unknown-linux-gnu",
     constraint_values = [
         "prelude//os/constraints:linux",
         "prelude//cpu/constraints:x86_64",
-        "prelude//abi/constraints:gnu",
-    ],
-    visibility = ["PUBLIC"],
-)
-
-platform(
-    name = "i686-unknown-linux-gnu",
-    constraint_values = [
-        "prelude//os/constraints:linux",
-        "prelude//cpu/constraints:x86_32",
         "prelude//abi/constraints:gnu",
     ],
     visibility = ["PUBLIC"],
