@@ -12,11 +12,6 @@ on:
         description: 'Run with tmate debug (manual only)'
         required: false
         default: false
-      enable_mingw_jobs:
-        type: boolean
-        description: 'Enable x86_64-pc-windows-gnu MinGW jobs (manual only)'
-        required: false
-        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -39,4 +34,3 @@ jobs:
       build_target: //...
       run_tests: true
       debug_enabled: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled || false }}
-      enable_mingw_jobs: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_mingw_jobs || false }}

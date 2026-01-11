@@ -28,8 +28,8 @@ Common commands:
 Platform-aware dependency mapping and bundled sample platforms currently target these Rust tier-1
 host triples:
 
-- Linux: `x86_64-unknown-linux-gnu`, `i686-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
-- Windows: `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu`, `i686-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+- Linux: `x86_64-unknown-linux-gnu`
+- Windows: `x86_64-pc-windows-msvc`
 - macOS: `aarch64-apple-darwin`
 
 ## Multi-platform builds

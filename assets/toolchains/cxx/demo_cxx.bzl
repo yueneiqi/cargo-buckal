@@ -5,63 +5,28 @@ load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
 def system_demo_cxx_toolchain():
     # We override the demo toolchains so we can avoid forcing `-fuse-ld=lld`.
     # The bundled demo cxx toolchain uses clang++ and adds `-fuse-ld=lld` on Linux,
-    # but some environments don't have lld installed. We also guard Linux cross
-    # compiler selection by OS so this file works on macOS/Windows too.
+    # but some environments don't have lld installed.
     system_cxx_toolchain(
         name = "cxx",
         compiler = select({
-            "prelude//os/constraints:linux": select({
-                "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-gcc",
-                "prelude//cpu/constraints:x86_32": "i686-linux-gnu-gcc",
-                "DEFAULT": "gcc",
-            }),
+            "prelude//os/constraints:linux": "gcc",
             "prelude//os/constraints:macos": "clang",
-            "prelude//os/constraints:windows": select({
-                "prelude//abi/constraints:gnu": "gcc",
-                "DEFAULT": "cl.exe",
-            }),
+            "prelude//os/constraints:windows": "cl.exe",
             "DEFAULT": "cc",
         }),
         # Keep `g++` as the C++ compiler on Linux so the prelude doesn't inject
         # `-fuse-ld=lld` (lld isn't guaranteed to exist). Other OSes use their
         # native compilers.
         cxx_compiler = select({
-            "prelude//os/constraints:linux": select({
-                "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-g++",
-                "prelude//cpu/constraints:x86_32": "i686-linux-gnu-g++",
-                "DEFAULT": "g++",
-            }),
+            "prelude//os/constraints:linux": "g++",
             "prelude//os/constraints:macos": "clang++",
-            "prelude//os/constraints:windows": select({
-                "prelude//abi/constraints:gnu": "g++",
-                "DEFAULT": "cl.exe",
-            }),
+            "prelude//os/constraints:windows": "cl.exe",
             "DEFAULT": "c++",
         }),
         linker = select({
-            "prelude//os/constraints:linux": select({
-                "prelude//cpu/constraints:arm64": "aarch64-linux-gnu-g++",
-                "prelude//cpu/constraints:x86_32": "i686-linux-gnu-g++",
-                "DEFAULT": "g++",
-            }),
+            "prelude//os/constraints:linux": "g++",
             "prelude//os/constraints:macos": "clang++",
-            "prelude//os/constraints:windows": select({
-                # MSVC targets: use Rust's bundled lld-link for non-x86_64 targets.
-                # This avoids relying on prelude's `msvc_tools` paths (which currently
-                # assume x86_64-hosted MSVC bin/lib layouts).
-                "prelude//abi/constraints:msvc": select({
-                    "prelude//cpu/constraints:arm64": "toolchains/cxx/tools/lld-link-aarch64.bat",
-                    "prelude//cpu/constraints:x86_32": "toolchains/cxx/tools/lld-link-i686.bat",
-                    "DEFAULT": "link.exe",
-                }),
-                # GNU targets must use a GNU-like driver; link.exe uses MSVC flag syntax.
-                "prelude//abi/constraints:gnu": "toolchains/cxx/tools/g++-x86_64-gnu-sysroot.bat",
-                "DEFAULT": select({
-                    "prelude//cpu/constraints:arm64": "toolchains/cxx/tools/lld-link-aarch64.bat",
-                    "prelude//cpu/constraints:x86_32": "toolchains/cxx/tools/lld-link-i686.bat",
-                    "DEFAULT": "link.exe",
-                }),
-            }),
+            "prelude//os/constraints:windows": "link.exe",
             "DEFAULT": "c++",
         }),
         # Buck prelude's system C++ toolchain injects `-fuse-ld=lld` into the

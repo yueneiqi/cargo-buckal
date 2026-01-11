@@ -4,29 +4,13 @@ load("@prelude//toolchains:rust.bzl", "system_rust_toolchain")
 
 def system_demo_rust_toolchain():
     # Buck prelude only maps a small set of CPU constraints to Rust triples by
-    # default. We provide an explicit mapping so `--target-platforms` works for
-    # x86_32 (i686) and OS-specific triples.
+    # default. We provide an explicit mapping so `--target-platforms` works.
     system_rust_toolchain(
         name = "rust",
         rustc_target_triple = select({
-            "prelude//os/constraints:linux": select({
-                "prelude//cpu/constraints:arm64": "aarch64-unknown-linux-gnu",
-                "prelude//cpu/constraints:x86_32": "i686-unknown-linux-gnu",
-                "DEFAULT": "x86_64-unknown-linux-gnu",
-            }),
-            "prelude//os/constraints:macos": select({
-                "prelude//cpu/constraints:arm64": "aarch64-apple-darwin",
-                "DEFAULT": "x86_64-apple-darwin",
-            }),
-            "prelude//os/constraints:windows": select({
-                "prelude//abi/constraints:gnu": "x86_64-pc-windows-gnu",
-                "prelude//abi/constraints:msvc": select({
-                    "prelude//cpu/constraints:arm64": "aarch64-pc-windows-msvc",
-                    "prelude//cpu/constraints:x86_32": "i686-pc-windows-msvc",
-                    "DEFAULT": "x86_64-pc-windows-msvc",
-                }),
-                "DEFAULT": "x86_64-pc-windows-msvc",
-            }),
+            "prelude//os/constraints:linux": "x86_64-unknown-linux-gnu",
+            "prelude//os/constraints:macos": "aarch64-apple-darwin",
+            "prelude//os/constraints:windows": "x86_64-pc-windows-msvc",
             "DEFAULT": "x86_64-unknown-linux-gnu",
         }),
         default_edition = "2021",

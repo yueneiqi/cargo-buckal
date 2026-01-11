@@ -41,13 +41,8 @@ impl Os {
 /// Ref: https://doc.rust-lang.org/nightly/rustc/platform-support.html#tier-1-with-host-tools
 static SUPPORTED_TARGETS: &[(Os, &str)] = &[
     (Os::Macos, "aarch64-apple-darwin"),
-    (Os::Windows, "aarch64-pc-windows-msvc"),
     (Os::Windows, "x86_64-pc-windows-msvc"),
-    (Os::Windows, "x86_64-pc-windows-gnu"),
-    (Os::Windows, "i686-pc-windows-msvc"),
-    (Os::Linux, "aarch64-unknown-linux-gnu"),
     (Os::Linux, "x86_64-unknown-linux-gnu"),
-    (Os::Linux, "i686-unknown-linux-gnu"),
 ];
 
 /// Cache of `rustc --print=cfg --target <triple>` output for supported triples.
