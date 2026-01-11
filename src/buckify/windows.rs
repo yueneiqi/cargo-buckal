@@ -13,8 +13,6 @@ use crate::{RUST_CRATES_ROOT, context::BuckalContext};
 struct WindowsImportLibFlags {
     gnu: Vec<String>,
     msvc_x86_64: Vec<String>,
-    msvc_i686: Vec<String>,
-    msvc_aarch64: Vec<String>,
 }
 
 pub(super) fn patch_root_windows_rustc_flags(
@@ -111,10 +109,8 @@ fn windows_import_lib_flags(ctx: &BuckalContext) -> WindowsImportLibFlags {
     push_build_script_rustc_flags("windows_x86_64_gnu", &mut flags.gnu);
     push_build_script_rustc_flags("winapi-x86_64-pc-windows-gnu", &mut flags.gnu);
 
-    // MSVC targets (per CPU).
+    // MSVC targets.
     push_build_script_rustc_flags("windows_x86_64_msvc", &mut flags.msvc_x86_64);
-    push_build_script_rustc_flags("windows_i686_msvc", &mut flags.msvc_i686);
-    push_build_script_rustc_flags("windows_aarch64_msvc", &mut flags.msvc_aarch64);
 
     flags
 }
@@ -122,30 +118,15 @@ fn windows_import_lib_flags(ctx: &BuckalContext) -> WindowsImportLibFlags {
 fn render_windows_rustc_flags_select(flags: &WindowsImportLibFlags) -> String {
     const CONSTRAINT_WINDOWS: &str = "prelude//os/constraints:windows";
     const CONSTRAINT_ABI_GNU: &str = "prelude//abi/constraints:gnu";
-    const CONSTRAINT_ABI_MSVC: &str = "prelude//abi/constraints:msvc";
-    const CONSTRAINT_CPU_ARM64: &str = "prelude//cpu/constraints:arm64";
-    const CONSTRAINT_CPU_X86_32: &str = "prelude//cpu/constraints:x86_32";
     const SELECT_DEFAULT: &str = "DEFAULT";
 
-    if flags.gnu.is_empty()
-        && flags.msvc_x86_64.is_empty()
-        && flags.msvc_i686.is_empty()
-        && flags.msvc_aarch64.is_empty()
-    {
+    if flags.gnu.is_empty() && flags.msvc_x86_64.is_empty() {
         return String::new();
     }
 
-    // Build nested select expressions using starlark_syntax AST
-    let msvc_cpu_select = build_select(&[
-        (CONSTRAINT_CPU_ARM64, build_string_list(&flags.msvc_aarch64)),
-        (CONSTRAINT_CPU_X86_32, build_string_list(&flags.msvc_i686)),
-        (SELECT_DEFAULT, build_string_list(&flags.msvc_x86_64)),
-    ]);
-
     let windows_select = build_select(&[
         (CONSTRAINT_ABI_GNU, build_string_list(&flags.gnu)),
-        (CONSTRAINT_ABI_MSVC, msvc_cpu_select.clone()),
-        (SELECT_DEFAULT, msvc_cpu_select),
+        (SELECT_DEFAULT, build_string_list(&flags.msvc_x86_64)),
     ]);
 
     let select_expr = build_select(&[
@@ -396,8 +377,6 @@ mod tests {
         let flags = WindowsImportLibFlags {
             gnu: vec!["@gnu1".to_owned(), "@gnu2".to_owned()],
             msvc_x86_64: vec!["@msvc64".to_owned()],
-            msvc_i686: vec!["@msvc32".to_owned()],
-            msvc_aarch64: vec!["@msvcarm".to_owned()],
         };
 
         let rendered = render_windows_rustc_flags_select(&flags);
@@ -409,28 +388,9 @@ mod tests {
                             "@gnu1",
                             "@gnu2",
                         ],
-                        "prelude//abi/constraints:msvc": select({
-                            "prelude//cpu/constraints:arm64": [
-                                "@msvcarm",
-                            ],
-                            "prelude//cpu/constraints:x86_32": [
-                                "@msvc32",
-                            ],
-                            "DEFAULT": [
-                                "@msvc64",
-                            ],
-                        }),
-                        "DEFAULT": select({
-                            "prelude//cpu/constraints:arm64": [
-                                "@msvcarm",
-                            ],
-                            "prelude//cpu/constraints:x86_32": [
-                                "@msvc32",
-                            ],
-                            "DEFAULT": [
-                                "@msvc64",
-                            ],
-                        }),
+                        "DEFAULT": [
+                            "@msvc64",
+                        ],
                     }),
                     "DEFAULT": [],
                 })"#};
