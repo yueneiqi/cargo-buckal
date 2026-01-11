@@ -1,0 +1,177 @@
+# Reusable workflow for verifying generated Buck2 files are identical across platforms
+#
+# This workflow:
+# 1. Downloads generated artifacts from all 3 platforms
+# 2. Compares the generated Buck2 files to ensure they are identical
+# 3. Fails if any differences are found (ensures multi-platform reproducibility)
+
+name: Verify Cross-Platform Generation
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        description: 'Project name for artifact naming (e.g., fd, libra, cargo-buckal)'
+        required: true
+        type: string
+
+jobs:
+  verify_cross_platform:
+    name: Verify generated files match across platforms
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download linux-generated artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.project_name }}-gen-linux
+          path: gen-linux
+
+      - name: Download macos-generated artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.project_name }}-gen-macos
+          path: gen-macos
+
+      - name: Download windows-generated artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.project_name }}-gen-windows
+          path: gen-windows
+
+      - name: Compare generated Buck2 files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Files/patterns to compare (Buck2 generated files)
+          PATTERNS=(
+            "BUCK"
+            "*/BUCK"
+            "**/BUCK"
+            ".buckconfig"
+            ".buckroot"
+            "toolchains/**"
+            "platforms/**"
+            "third-party/**"
+          )
+
+          # Files/directories to exclude from comparison (platform-specific or non-deterministic)
+          EXCLUDES=(
+            ".git"
+            "buck-out"
+            "target"
+            "Cargo.lock"
+            "*.snap"
+          )
+
+          # Build find exclude arguments
+          EXCLUDE_ARGS=""
+          for excl in "${EXCLUDES[@]}"; do
+            EXCLUDE_ARGS="$EXCLUDE_ARGS -name '$excl' -prune -o"
+          done
+
+          echo "=== Comparing generated Buck2 files across platforms ==="
+          echo ""
+
+          # Function to get list of Buck2-related files
+          get_buck2_files() {
+            local dir="$1"
+            cd "$dir"
+            find . \( -name '.git' -o -name 'buck-out' -o -name 'target' -o -name '*.snap' \) -prune -o \
+              \( -name 'BUCK' -o -name '.buckconfig' -o -name '.buckroot' \) -print | sort
+            find . -type d \( -name '.git' -o -name 'buck-out' -o -name 'target' \) -prune -o \
+              -type f -path '*/toolchains/*' -print | sort
+            find . -type d \( -name '.git' -o -name 'buck-out' -o -name 'target' \) -prune -o \
+              -type f -path '*/platforms/*' -print | sort
+            find . -type d \( -name '.git' -o -name 'buck-out' -o -name 'target' \) -prune -o \
+              -type f -path '*/third-party/*' -print | sort
+            cd - > /dev/null
+          }
+
+          # Get file lists
+          echo "Collecting Buck2 files from each platform..."
+          get_buck2_files gen-linux | sort -u > /tmp/files-linux.txt
+          get_buck2_files gen-macos | sort -u > /tmp/files-macos.txt
+          get_buck2_files gen-windows | sort -u > /tmp/files-windows.txt
+
+          echo "Linux files: $(wc -l < /tmp/files-linux.txt)"
+          echo "macOS files: $(wc -l < /tmp/files-macos.txt)"
+          echo "Windows files: $(wc -l < /tmp/files-windows.txt)"
+          echo ""
+
+          FAILED=0
+
+          # Compare file lists
+          echo "=== Checking file list consistency ==="
+          if ! diff -q /tmp/files-linux.txt /tmp/files-macos.txt > /dev/null 2>&1; then
+            echo "❌ File list differs between Linux and macOS:"
+            diff /tmp/files-linux.txt /tmp/files-macos.txt || true
+            FAILED=1
+          fi
+
+          if ! diff -q /tmp/files-linux.txt /tmp/files-windows.txt > /dev/null 2>&1; then
+            echo "❌ File list differs between Linux and Windows:"
+            diff /tmp/files-linux.txt /tmp/files-windows.txt || true
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -eq 0 ]; then
+            echo "✅ File lists match across all platforms"
+          fi
+          echo ""
+
+          # Compare file contents
+          echo "=== Checking file content consistency ==="
+          CONTENT_FAILED=0
+
+          while IFS= read -r file; do
+            if [ -z "$file" ]; then
+              continue
+            fi
+
+            linux_file="gen-linux/$file"
+            macos_file="gen-macos/$file"
+            windows_file="gen-windows/$file"
+
+            # Compare Linux vs macOS
+            if [ -f "$linux_file" ] && [ -f "$macos_file" ]; then
+              if ! diff -q "$linux_file" "$macos_file" > /dev/null 2>&1; then
+                echo "❌ Content differs: $file (Linux vs macOS)"
+                echo "--- Diff ---"
+                diff "$linux_file" "$macos_file" | head -50 || true
+                echo "------------"
+                CONTENT_FAILED=1
+              fi
+            fi
+
+            # Compare Linux vs Windows
+            if [ -f "$linux_file" ] && [ -f "$windows_file" ]; then
+              if ! diff -q "$linux_file" "$windows_file" > /dev/null 2>&1; then
+                echo "❌ Content differs: $file (Linux vs Windows)"
+                echo "--- Diff ---"
+                diff "$linux_file" "$windows_file" | head -50 || true
+                echo "------------"
+                CONTENT_FAILED=1
+              fi
+            fi
+          done < /tmp/files-linux.txt
+
+          if [ "$CONTENT_FAILED" -eq 0 ]; then
+            echo "✅ All file contents match across all platforms"
+          else
+            FAILED=1
+          fi
+
+          echo ""
+          echo "=== Summary ==="
+          if [ "$FAILED" -eq 0 ]; then
+            echo "✅ SUCCESS: Generated Buck2 files are identical across Linux, macOS, and Windows"
+            exit 0
+          else
+            echo "❌ FAILURE: Generated Buck2 files differ across platforms"
+            echo ""
+            echo "This indicates a bug in cargo-buckal's generation logic."
+            echo "Generated BUCK files should be platform-independent."
+            exit 1
+          fi
