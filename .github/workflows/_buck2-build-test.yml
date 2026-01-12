@@ -47,7 +47,7 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.target }} ${{ matrix.gen_platform }}-gen (${{ matrix.os }})
+    name: ${{ matrix.target }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
       MSYS_NO_PATHCONV: ${{ matrix.os == 'Windows' && '1' || '' }}
@@ -55,38 +55,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ========== aarch64-apple-darwin (macos-14) ==========
+          # Since generated Buck2 files are identical across platforms (verified by _buck2-verify-cross-platform.yml),
+          # we only need to test one generated artifact per target platform.
           - target: aarch64-apple-darwin
             os: macos-14
-            gen_platform: linux
-          - target: aarch64-apple-darwin
-            os: macos-14
-            gen_platform: macos
-          - target: aarch64-apple-darwin
-            os: macos-14
-            gen_platform: windows
-
-          # ========== x86_64-pc-windows-msvc (windows-2022) ==========
           - target: x86_64-pc-windows-msvc
             os: windows-2022
-            gen_platform: linux
-          - target: x86_64-pc-windows-msvc
-            os: windows-2022
-            gen_platform: macos
-          - target: x86_64-pc-windows-msvc
-            os: windows-2022
-            gen_platform: windows
-
-          # ========== x86_64-unknown-linux-gnu (ubuntu-24.04) ==========
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
-            gen_platform: linux
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: macos
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-            gen_platform: windows
 
     steps:
       - name: Set cargo target dir
@@ -111,10 +87,10 @@ jobs:
       # ============================================================
       # Download generated tree
       # ============================================================
-      - name: Download ${{ inputs.project_name }}-gen-${{ matrix.gen_platform }}
+      - name: Download ${{ inputs.project_name }}-gen-linux
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.project_name }}-gen-${{ matrix.gen_platform }}
+          name: ${{ inputs.project_name }}-gen-linux
           path: ${{ inputs.project_dir || inputs.project_name }}
 
       # ============================================================
