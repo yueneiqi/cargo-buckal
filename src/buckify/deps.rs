@@ -1,13 +1,14 @@
-use std::collections::{BTreeSet as Set, HashMap};
+use std::{
+    collections::{BTreeSet as Set, HashMap},
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result, bail};
-use cargo_metadata::{DependencyKind, Node, NodeDep, Package, PackageId};
-use serde_json::Value;
+use cargo_metadata::{DependencyKind, Node, NodeDep, Package, PackageId, Target};
 
 use crate::{
     RUST_CRATES_ROOT,
     buck::{CargoTargetKind, RustRule},
-    buck2::Buck2Command,
     buckal_note, buckal_warn,
     context::BuckalContext,
     platform::{Os, oses_from_platform, platform_is_target_only},
@@ -25,69 +26,64 @@ pub(super) fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: Dependenc
     }
 }
 
+fn get_lib_targets(package: &Package) -> Vec<&Target> {
+    package
+        .targets
+        .iter()
+        .filter(|t| {
+            t.kind.contains(&cargo_metadata::TargetKind::Lib)
+                || t.kind.contains(&cargo_metadata::TargetKind::CDyLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::DyLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::RLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::StaticLib)
+                || t.kind.contains(&cargo_metadata::TargetKind::ProcMacro)
+        })
+        .collect()
+}
+
 fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
     let buck2_root = get_buck2_root().context("failed to get buck2 root")?;
-    let manifest_dir = dep_package
-        .manifest_path
+    let manifest_path = PathBuf::from(&dep_package.manifest_path);
+    let manifest_dir = manifest_path
         .parent()
         .context("manifest_path should always have a parent directory")?;
-    let relative = manifest_dir.strip_prefix(&buck2_root).with_context(|| {
-        format!(
-            "dependency manifest dir `{}` is not under Buck2 root `{}`",
-            manifest_dir, buck2_root
-        )
-    })?;
+    let relative_path = manifest_dir
+        .strip_prefix(&buck2_root)
+        .with_context(|| {
+            format!(
+                "dependency manifest dir `{}` is not under Buck2 root `{}`",
+                manifest_dir.display(),
+                buck2_root
+            )
+        })?
+        .to_string_lossy();
 
-    let relative_path = relative.as_str();
-    let target = if relative_path.is_empty() {
-        "//...".to_string()
-    } else {
-        format!("//{relative_path}/...")
-    };
+    let dep_bin_targets: Vec<_> = dep_package
+        .targets
+        .iter()
+        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Bin))
+        .collect();
 
-    let output = Buck2Command::targets()
-        .arg(&target)
-        .arg("--json")
-        .output()
-        .with_context(|| format!("failed to execute `buck2 targets {target} --json`"))?;
-    if !output.status.success() {
+    let dep_lib_targets = get_lib_targets(dep_package);
+
+    if dep_lib_targets.len() != 1 {
         bail!(
-            "buck2 targets failed for `{target}`:\n{}",
-            String::from_utf8_lossy(&output.stderr)
+            "Expected exactly one library target for dependency {}, but found {}",
+            dep_package.name,
+            dep_lib_targets.len()
         );
     }
 
-    let targets: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .context("failed to parse buck2 targets JSON output")?;
-    let target_item = targets
+    let buckal_name = if dep_bin_targets
         .iter()
-        .find(|t| {
-            t.get("buck.type")
-                .and_then(|k| k.as_str())
-                .is_some_and(|k| k.ends_with("rust_library"))
-        })
-        .with_context(|| {
-            format!(
-                "failed to find `rust_library` target for package `{}` (manifest `{}`) using target pattern `{target}`",
-                dep_package.name, dep_package.manifest_path
-            )
-        })?;
+        .any(|b| b.name == dep_lib_targets[0].name)
+    {
+        format!("lib{}", dep_lib_targets[0].name)
+    } else {
+        dep_lib_targets[0].name.to_owned()
+    };
 
-    let buck_package_raw = target_item
-        .get("buck.package")
-        .and_then(|n| n.as_str())
-        .context("buck2 targets output is missing `buck.package`")?;
-    let buck_package = buck_package_raw
-        .strip_prefix("root")
-        .unwrap_or(buck_package_raw);
-
-    let buck_name = target_item
-        .get("name")
-        .and_then(|n| n.as_str())
-        .context("buck2 targets output is missing `name`")?;
-
-    let label = format!("{buck_package}:{buck_name}");
-    Ok(label)
+    Ok(format!("//{relative_path}:{buckal_name}"))
 }
 
 fn resolve_dep_label(
