@@ -34,11 +34,6 @@ on:
         required: false
         type: boolean
         default: false
-      buck2_rev:
-        description: 'Buck2 git revision to install'
-        required: false
-        type: string
-        default: 'c6bfcc629378a00921aa04597551442c9e2ea2eb'
       nightly_toolchain:
         description: 'Nightly Rust toolchain version'
         required: false
@@ -115,9 +110,6 @@ jobs:
       # ============================================================
       - name: Install Buck2
         uses: ./cargo-buckal/.github/actions/install-buck2
-        with:
-          buck2_rev: ${{ inputs.buck2_rev }}
-          nightly_toolchain: ${{ inputs.nightly_toolchain }}
 
       # ============================================================
       # Show version information

@@ -8,6 +8,7 @@ use clap::Parser;
 
 use crate::{
     RUST_CRATES_ROOT,
+    assets::extract_buck2_assets,
     buck2::Buck2Command,
     buckal_error, buckal_log, buckal_note,
     bundles::{init_buckal_cell, init_modifier},
@@ -89,6 +90,8 @@ pub fn execute(args: &InitArgs) {
         // Configure the buckal cell in .buckconfig
         let cwd = std::env::current_dir().unwrap_or_exit();
         init_buckal_cell(&cwd).unwrap_or_exit();
+
+        extract_buck2_assets(&cwd).unwrap_or_exit_ctx("failed to extract buck2 assets");
 
         // Init cfg modifiers
         init_modifier(&cwd).unwrap_or_exit();

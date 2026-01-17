@@ -1,0 +1,107 @@
+# Test cargo buckal init/new commands across platforms
+#
+# This workflow tests the init and new subcommands with various flags.
+
+name: Test init/new commands
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test_init_new_commands:
+    name: test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+          - name: macos
+            os: macos-14
+          - name: windows
+            os: windows-2022
+
+    steps:
+      - name: Set cargo target dir
+        shell: bash
+        run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> "$GITHUB_ENV"
+
+      - name: Checkout cargo-buckal
+        uses: actions/checkout@v6
+        with:
+          path: cargo-buckal
+
+      - name: Setup Windows environment
+        uses: ./cargo-buckal/.github/actions/setup-windows
+
+      - name: Setup Rust toolchains
+        uses: ./cargo-buckal/.github/actions/setup-rust-toolchains
+        with:
+          nightly_toolchain: nightly-2025-08-01
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            cargo-buckal -> target
+          cache-all-crates: true
+
+      - name: Install Buck2
+        uses: ./cargo-buckal/.github/actions/install-buck2
+
+      - name: Install cargo-buckal
+        shell: bash
+        run: |
+          cd cargo-buckal
+          cargo install --locked --path .
+
+      - name: Test cargo buckal init --repo
+        shell: bash
+        run: |
+          mkdir -p test-init-repo && cd test-init-repo
+          cargo buckal init --repo
+          test -d toolchains
+          test -d platforms
+          test -f toolchains/BUCK
+          test -f platforms/BUCK
+          test -f .buckconfig
+
+      - name: Test cargo buckal init --lite
+        shell: bash
+        run: |
+          mkdir -p test-init-lite && cd test-init-lite
+          cargo buckal init --lite
+          test -d toolchains
+          test -d platforms
+          test -f toolchains/BUCK
+          test -f platforms/BUCK
+          test -f .buckconfig
+
+      - name: Test cargo buckal new --repo
+        shell: bash
+        run: |
+          cargo buckal new test-new-repo --repo
+          test -d test-new-repo/toolchains
+          test -d test-new-repo/platforms
+          test -f test-new-repo/toolchains/BUCK
+          test -f test-new-repo/platforms/BUCK
+          test -f test-new-repo/.buckconfig
+
+      - name: Test cargo buckal new --lite
+        shell: bash
+        run: |
+          cargo buckal new test-new-lite --lite
+          test -d test-new-lite/toolchains
+          test -d test-new-lite/platforms
+          test -f test-new-lite/toolchains/BUCK
+          test -f test-new-lite/platforms/BUCK
+          test -f test-new-lite/.buckconfig
