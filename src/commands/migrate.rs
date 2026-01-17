@@ -11,7 +11,7 @@ use crate::{
     bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier},
     cache::BuckalCache,
     context::BuckalContext,
-    utils::{UnwrapOrExit, check_buck2_package, ensure_prerequisites},
+    utils::{UnwrapOrExit, ensure_prerequisites},
 };
 
 #[derive(Parser, Debug)]
@@ -36,11 +36,6 @@ pub struct MigrateArgs {
 pub fn execute(args: &MigrateArgs) {
     // Ensure all prerequisites are installed before proceeding
     ensure_prerequisites().unwrap_or_exit();
-
-    // Check if the current directory is a valid Buck2 package
-    if !args.buck2 {
-        check_buck2_package().unwrap_or_exit();
-    }
 
     // get cargo metadata and generate context
     let mut ctx = BuckalContext::new();
