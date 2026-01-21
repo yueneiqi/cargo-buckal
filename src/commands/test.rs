@@ -70,9 +70,9 @@ pub struct TestArgs {
     #[arg(short, long, value_name = "N")]
     pub jobs: Option<usize>,
 
-    /// Build for the target triple
-    #[arg(long, value_name = "TRIPLE")]
-    pub target: Option<String>,
+    /// Build for the target platform (passed to buck2 --target-platforms)
+    #[arg(long, value_name = "PLATFORM")]
+    pub target_platforms: Option<String>,
 
     /// Build artifacts in release mode, with optimizations
     #[arg(short, long)]
@@ -145,8 +145,8 @@ pub fn execute(args: &TestArgs) {
         cmd = cmd.arg("-j").arg(jobs.to_string());
     }
 
-    if let Some(target) = &args.target {
-        cmd = cmd.arg("--target-platforms").arg(target);
+    if let Some(platform) = &args.target_platforms {
+        cmd = cmd.arg("--target-platforms").arg(platform);
     }
 
     if args.release {

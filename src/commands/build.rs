@@ -39,6 +39,10 @@ pub struct BuildArgs {
     /// Build all targets
     #[arg(long)]
     pub all_targets: bool,
+
+    /// Build for the target platform (passed to buck2 --target-platforms)
+    #[arg(long, value_name = "PLATFORM")]
+    pub target_platforms: Option<String>,
 }
 
 impl BuildArgs {
@@ -120,6 +124,9 @@ pub fn execute(args: &BuildArgs) {
         let mut buck2_cmd = Buck2Command::build(&target).verbosity(args.verbose);
         if args.release {
             buck2_cmd = buck2_cmd.arg("-m").arg("release");
+        }
+        if let Some(platform) = &args.target_platforms {
+            buck2_cmd = buck2_cmd.arg("--target-platforms").arg(platform);
         }
 
         let result = buck2_cmd.status();
@@ -407,6 +414,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(args.validate_target_selection().is_ok());
 
@@ -419,6 +427,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(args.validate_target_selection().is_ok());
 
@@ -432,6 +441,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target_platforms: None,
         };
         assert!(args.validate_target_selection().is_ok());
 
@@ -445,6 +455,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target_platforms: None,
         };
         assert!(args.validate_target_selection().is_err());
     }
@@ -460,6 +471,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(!args.has_target_selection());
 
@@ -472,6 +484,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(args.has_target_selection());
 
@@ -484,6 +497,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(args.has_target_selection());
 
@@ -496,6 +510,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target_platforms: None,
         };
         assert!(args.has_target_selection());
     }
@@ -511,6 +526,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(!args.has_other_target_selection());
 
@@ -523,6 +539,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(args.has_other_target_selection());
 
@@ -535,6 +552,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
         assert!(args.has_other_target_selection());
 
@@ -547,6 +565,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target_platforms: None,
         };
         assert!(!args.has_other_target_selection());
     }
@@ -760,6 +779,7 @@ mod tests {
             example: vec!["demo*".to_string()],
             examples: false,
             all_targets: false,
+            target_platforms: None,
         };
 
         assert!(args.has_target_selection());
