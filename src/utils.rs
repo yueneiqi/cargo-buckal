@@ -320,6 +320,12 @@ pub fn get_buck2_root() -> io::Result<Utf8PathBuf> {
     }
 }
 
+pub fn has_platforms_dir(buck2_root: &Utf8PathBuf) -> bool {
+    let platforms_dir = buck2_root.join("platforms");
+    let platforms_buck = platforms_dir.join("BUCK");
+    platforms_dir.is_dir() && platforms_buck.is_file()
+}
+
 pub fn check_buck2_package() -> io::Result<()> {
     // This function checks if the current directory is a valid Buck2 package.
     let cwd = std::env::current_dir().expect("Failed to get current directory");

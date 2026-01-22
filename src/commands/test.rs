@@ -1,6 +1,9 @@
 use crate::{
     buck2::Buck2Command,
-    utils::{UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root},
+    utils::{
+        UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root, get_target,
+        has_platforms_dir,
+    },
 };
 use anyhow::{Context, Result, anyhow};
 use cargo_metadata::MetadataCommand;
@@ -145,7 +148,14 @@ pub fn execute(args: &TestArgs) {
         cmd = cmd.arg("-j").arg(jobs.to_string());
     }
 
-    if let Some(platform) = &args.target_platforms {
+    let target_platforms = if let Some(platform) = &args.target_platforms {
+        Some(platform.clone())
+    } else if has_platforms_dir(&buck2_root) {
+        Some(format!("//platforms:{}", get_target()))
+    } else {
+        None
+    };
+    if let Some(platform) = &target_platforms {
         cmd = cmd.arg("--target-platforms").arg(platform);
     }
 

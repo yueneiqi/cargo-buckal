@@ -4,7 +4,10 @@ use serde::Deserialize;
 use crate::{
     buck2::Buck2Command,
     buckal_error, buckal_log,
-    utils::{UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root},
+    utils::{
+        UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root, get_target,
+        has_platforms_dir,
+    },
 };
 
 #[derive(Parser, Debug)]
@@ -120,13 +123,21 @@ pub fn execute(args: &BuildArgs) {
         std::process::exit(1);
     }
 
+    let target_platforms = if let Some(platform) = &args.target_platforms {
+        Some(platform.clone())
+    } else if has_platforms_dir(&buck2_root) {
+        Some(format!("//platforms:{}", get_target()))
+    } else {
+        None
+    };
+
     // Execute build for each target
     for target in targets {
         let mut buck2_cmd = Buck2Command::build(&target).verbosity(args.verbose);
         if args.release {
             buck2_cmd = buck2_cmd.arg("-m").arg("release");
         }
-        if let Some(platform) = &args.target_platforms {
+        if let Some(platform) = &target_platforms {
             buck2_cmd = buck2_cmd.arg("--target-platforms").arg(platform);
         }
 
