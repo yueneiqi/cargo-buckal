@@ -1,4 +1,5 @@
 use clap::Parser;
+use serde::Deserialize;
 
 use crate::{
     buck2::Buck2Command,
@@ -110,8 +111,8 @@ pub fn execute(args: &BuildArgs) {
         // Build specific targets based on selection
         build_specific_targets(args, &relative_path)
     } else {
-        // Default: build all targets (backward compatibility)
-        vec![format!("//{relative_path}...")]
+        // Default: build first-party Rust targets under the current directory.
+        get_available_targets(&relative_path)
     };
 
     if targets.is_empty() {
@@ -188,27 +189,69 @@ fn build_specific_targets(args: &BuildArgs, relative_path: &str) -> Vec<String> 
 }
 
 /// Get available targets from Buck2
+#[derive(Debug, Deserialize)]
+struct TargetEntry {
+    #[serde(rename = "buck.type")]
+    buck_type: String,
+    #[serde(rename = "buck.package")]
+    buck_package: String,
+    name: String,
+}
+
 fn get_available_targets(relative_path: &str) -> Vec<String> {
     let target_pattern = format!("//{relative_path}...");
 
     match Buck2Command::targets()
         .arg(&target_pattern)
-        .arg("--type")
-        .arg("rust_library")
-        .arg("--type")
-        .arg("rust_binary")
+        .arg("--output-basic-attributes")
+        .arg("--json")
         .output()
     {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
+        Ok(output) if output.status.success() => match serde_json::from_slice::<Vec<TargetEntry>>(
+            &output.stdout,
+        ) {
+            Ok(entries) => {
+                let targets = entries
+                    .into_iter()
+                    .filter(|entry| {
+                        entry.buck_type.ends_with(":rust_binary")
+                            || entry.buck_type.ends_with(":rust_library")
+                    })
+                    .map(|entry| {
+                        let package = entry
+                            .buck_package
+                            .strip_prefix("root//")
+                            .unwrap_or(entry.buck_package.as_str())
+                            .trim_end_matches('/');
+                        if package.is_empty() {
+                            format!("//:{}", entry.name)
+                        } else {
+                            format!("//{}:{}", package, entry.name)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                filter_root_third_party(targets, relative_path)
+            }
+            Err(_) => vec![target_pattern],
+        },
         _ => {
             // If we can't get specific targets, fall back to all targets
             vec![target_pattern]
         }
     }
+}
+
+fn filter_root_third_party(mut targets: Vec<String>, relative_path: &str) -> Vec<String> {
+    if !relative_path.is_empty() {
+        return targets;
+    }
+
+    targets.retain(|target| {
+        !target.starts_with("//third-party/")
+            && !target.starts_with("//toolchains/")
+            && !target.starts_with("//platforms/")
+    });
+    targets
 }
 
 /// Get library targets
