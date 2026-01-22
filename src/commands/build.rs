@@ -108,8 +108,8 @@ pub fn execute(args: &BuildArgs) {
 
     // Determine build targets based on selection arguments
     let targets = if args.all_targets {
-        // Build all targets in the current directory
-        vec![format!("//{relative_path}...")]
+        // Build all first-party Rust targets (avoid third-party //...).
+        get_available_targets_all(&relative_path)
     } else if args.has_target_selection() {
         // Build specific targets based on selection
         build_specific_targets(args, &relative_path)
@@ -210,6 +210,14 @@ struct TargetEntry {
 }
 
 fn get_available_targets(relative_path: &str) -> Vec<String> {
+    get_available_targets_by_kind(relative_path, false)
+}
+
+fn get_available_targets_all(relative_path: &str) -> Vec<String> {
+    get_available_targets_by_kind(relative_path, true)
+}
+
+fn get_available_targets_by_kind(relative_path: &str, include_tests: bool) -> Vec<String> {
     let target_pattern = format!("//{relative_path}...");
 
     match Buck2Command::targets()
@@ -218,33 +226,34 @@ fn get_available_targets(relative_path: &str) -> Vec<String> {
         .arg("--json")
         .output()
     {
-        Ok(output) if output.status.success() => match serde_json::from_slice::<Vec<TargetEntry>>(
-            &output.stdout,
-        ) {
-            Ok(entries) => {
-                let targets = entries
-                    .into_iter()
-                    .filter(|entry| {
-                        entry.buck_type.ends_with(":rust_binary")
-                            || entry.buck_type.ends_with(":rust_library")
-                    })
-                    .map(|entry| {
-                        let package = entry
-                            .buck_package
-                            .strip_prefix("root//")
-                            .unwrap_or(entry.buck_package.as_str())
-                            .trim_end_matches('/');
-                        if package.is_empty() {
-                            format!("//:{}", entry.name)
-                        } else {
-                            format!("//{}:{}", package, entry.name)
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                filter_root_third_party(targets, relative_path)
+        Ok(output) if output.status.success() => {
+            match serde_json::from_slice::<Vec<TargetEntry>>(&output.stdout) {
+                Ok(entries) => {
+                    let targets = entries
+                        .into_iter()
+                        .filter(|entry| {
+                            entry.buck_type.ends_with(":rust_binary")
+                                || entry.buck_type.ends_with(":rust_library")
+                                || (include_tests && entry.buck_type.ends_with(":rust_test"))
+                        })
+                        .map(|entry| {
+                            let package = entry
+                                .buck_package
+                                .strip_prefix("root//")
+                                .unwrap_or(entry.buck_package.as_str())
+                                .trim_end_matches('/');
+                            if package.is_empty() {
+                                format!("//:{}", entry.name)
+                            } else {
+                                format!("//{}:{}", package, entry.name)
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    filter_root_third_party(targets, relative_path)
+                }
+                Err(_) => vec![target_pattern],
             }
-            Err(_) => vec![target_pattern],
-        },
+        }
         _ => {
             // If we can't get specific targets, fall back to all targets
             vec![target_pattern]
