@@ -54,10 +54,17 @@ If no configuration file exists, cargo-buckal will use `buck2` (searches your PA
 
 ## Pre-commit Hooks
 
-This project uses [prek](https://github.com/prek-rs/prek) for pre-commit hooks. To set up:
+This project uses [prek](https://github.com/j178/prek) for pre-commit hooks (configured in `.pre-commit-config.yaml`).
+Install `prek` following the project instructions, then set up the git hooks:
 
 ```
 prek install
+```
+
+To run hooks on all files at any time:
+
+```
+prek run --all-files
 ```
 
 ## Repos using cargo-buckal
