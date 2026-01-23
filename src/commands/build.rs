@@ -6,7 +6,7 @@ use crate::{
     buckal_error, buckal_log,
     utils::{
         UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root, get_target,
-        has_platforms_dir,
+        platform_exists,
     },
 };
 
@@ -125,10 +125,13 @@ pub fn execute(args: &BuildArgs) {
 
     let target_platforms = if let Some(platform) = &args.target_platforms {
         Some(platform.clone())
-    } else if has_platforms_dir(&buck2_root) {
-        Some(format!("//platforms:{}", get_target()))
     } else {
-        None
+        let platform = format!("//platforms:{}", get_target());
+        if platform_exists(&platform) {
+            Some(platform)
+        } else {
+            None
+        }
     };
 
     // Execute build for each target

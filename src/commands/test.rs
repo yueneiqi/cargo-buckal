@@ -2,7 +2,7 @@ use crate::{
     buck2::Buck2Command,
     utils::{
         UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root, get_target,
-        has_platforms_dir,
+        platform_exists,
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -150,10 +150,13 @@ pub fn execute(args: &TestArgs) {
 
     let target_platforms = if let Some(platform) = &args.target_platforms {
         Some(platform.clone())
-    } else if has_platforms_dir(&buck2_root) {
-        Some(format!("//platforms:{}", get_target()))
     } else {
-        None
+        let platform = format!("//platforms:{}", get_target());
+        if platform_exists(&platform) {
+            Some(platform)
+        } else {
+            None
+        }
     };
     if let Some(platform) = &target_platforms {
         cmd = cmd.arg("--target-platforms").arg(platform);

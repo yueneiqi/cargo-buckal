@@ -320,10 +320,16 @@ pub fn get_buck2_root() -> io::Result<Utf8PathBuf> {
     }
 }
 
-pub fn has_platforms_dir(buck2_root: &Utf8PathBuf) -> bool {
-    let platforms_dir = buck2_root.join("platforms");
-    let platforms_buck = platforms_dir.join("BUCK");
-    platforms_dir.is_dir() && platforms_buck.is_file()
+/// Check if a platform target exists using buck2 uquery
+pub fn platform_exists(platform_target: &str) -> bool {
+    let output = crate::buck2::Buck2Command::uquery()
+        .arg(platform_target)
+        .output();
+
+    match output {
+        Ok(o) => o.status.success(),
+        Err(_) => false,
+    }
 }
 
 pub fn check_buck2_package() -> io::Result<()> {
