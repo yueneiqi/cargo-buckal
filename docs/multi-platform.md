@@ -27,11 +27,21 @@ If a predicate can’t be mapped to `linux`/`macos`/`windows`, cargo-buckal trea
 
 ## Using it
 
-1. Generate BUCK (and initialize Buck2 config on first run):
+1. Generate BUCK files:
+
+   For first-time setup (initializes Buck2 and generates BUCK files):
 
    ```bash
    cargo buckal migrate --buck2
    ```
+
+   For incremental updates (when Buck2 is already initialized):
+
+   ```bash
+   cargo buckal migrate
+   ```
+
+   This regenerates BUCK files based on current `Cargo.toml`/`Cargo.lock` changes without reinitializing Buck2. Use this after adding/removing dependencies or updating `Cargo.lock`.
 
    To update the pinned Buckal bundles revision (the `buckal` cell), rerun with:
 
