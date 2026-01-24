@@ -61,8 +61,11 @@ pub fn execute(args: &MigrateArgs) {
             get_buck2_root().unwrap_or_exit_ctx("failed to get Buck2 project root")
         });
 
-        std::fs::create_dir_all(buck2_root.join(RUST_CRATES_ROOT))
-            .unwrap_or_exit_ctx("failed to create third-party directory");
+        let crates_dir = buck2_root.join(RUST_CRATES_ROOT);
+        std::fs::create_dir_all(&crates_dir).unwrap_or_exit_ctx(format!(
+            "failed to create third-party rust crates directory at `{}`",
+            crates_dir
+        ));
         let mut git_ignore = OpenOptions::new()
             .create(false)
             .append(true)
