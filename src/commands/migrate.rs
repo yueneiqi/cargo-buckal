@@ -11,7 +11,7 @@ use crate::{
     bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier},
     cache::BuckalCache,
     context::BuckalContext,
-    utils::{UnwrapOrExit, ensure_prerequisites},
+    utils::{UnwrapOrExit, ensure_prerequisites, get_buck2_root},
 };
 
 #[derive(Parser, Debug)]
@@ -41,32 +41,43 @@ pub fn execute(args: &MigrateArgs) {
     // Compared to `cargo buckal init`, here we only setup Buck2 related files
     if args.buck2 {
         let cwd = std::env::current_dir().unwrap_or_exit();
-        let toolchains_dir = cwd.join("toolchains");
-        let platforms_dir = cwd.join("platforms");
+        let existing_root = get_buck2_root().ok();
+        let root_for_checks = existing_root
+            .as_ref()
+            .map(|root| root.as_std_path())
+            .unwrap_or_else(|| cwd.as_path());
+        let toolchains_dir = root_for_checks.join("toolchains");
+        let platforms_dir = root_for_checks.join("platforms");
         if toolchains_dir.is_dir() || platforms_dir.is_dir() {
             buckal_error!(
-                "`toolchains/` or `platforms/` directory already exists. Please delete them first."
+                "`toolchains/` or `platforms/` directory already exists under `{}`. Please delete them first.",
+                root_for_checks.display()
             );
             std::process::exit(1);
         }
 
         Buck2Command::init().execute().unwrap_or_exit();
-        std::fs::create_dir_all(RUST_CRATES_ROOT)
+        let buck2_root = existing_root.unwrap_or_else(|| {
+            get_buck2_root().unwrap_or_exit_ctx("failed to get Buck2 project root")
+        });
+
+        std::fs::create_dir_all(buck2_root.join(RUST_CRATES_ROOT))
             .unwrap_or_exit_ctx("failed to create third-party directory");
         let mut git_ignore = OpenOptions::new()
             .create(false)
             .append(true)
-            .open(".gitignore")
+            .open(buck2_root.join(".gitignore"))
             .unwrap_or_exit();
         writeln!(git_ignore, "/buck-out").unwrap_or_exit();
 
         // Configure the buckal cell in .buckconfig
-        init_buckal_cell(&cwd).unwrap_or_exit();
+        init_buckal_cell(buck2_root.as_std_path()).unwrap_or_exit();
 
-        extract_buck2_assets(&cwd).unwrap_or_exit_ctx("failed to extract buck2 assets");
+        extract_buck2_assets(buck2_root.as_std_path())
+            .unwrap_or_exit_ctx("failed to extract buck2 assets");
 
         // Init cfg modifiers
-        init_modifier(&cwd).unwrap_or_exit();
+        init_modifier(buck2_root.as_std_path()).unwrap_or_exit();
     }
 
     // Fetch latest bundles if requested
