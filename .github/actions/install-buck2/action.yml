@@ -5,7 +5,7 @@ inputs:
   version:
     description: 'Buck2 release version (e.g., 2026-01-02, latest)'
     required: false
-    default: '2026-01-02'
+    default: 'latest'
 
 runs:
   using: "composite"
