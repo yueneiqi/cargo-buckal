@@ -28,7 +28,7 @@ runs:
 
         echo "Downloading buck2 from $URL"
         mkdir -p "$HOME/.cargo/bin"
-        if [ ! -x "$HOME/.cargo/bin/buck2" ]; then
+        if [ "$VERSION" = "latest" ] || [ ! -x "$HOME/.cargo/bin/buck2" ]; then
           curl -fsSL "$URL" | zstd -d -o "$HOME/.cargo/bin/buck2"
           chmod +x "$HOME/.cargo/bin/buck2"
         else
@@ -54,7 +54,7 @@ runs:
         $buck2Exe = "$binDir\buck2.exe"
 
         Write-Host "Downloading buck2 from $buck2Url"
-        if (-not (Test-Path $buck2Exe)) {
+        if (($version -eq "latest") -or (-not (Test-Path $buck2Exe))) {
           Invoke-WebRequest -Uri $buck2Url -OutFile $zstFile
 
           if (-not (Get-Command zstd -ErrorAction SilentlyContinue)) {
