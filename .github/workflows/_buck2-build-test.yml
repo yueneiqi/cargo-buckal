@@ -34,11 +34,6 @@ on:
         required: false
         type: boolean
         default: false
-      nightly_toolchain:
-        description: 'Nightly Rust toolchain version'
-        required: false
-        type: string
-        default: 'nightly-2025-08-01'
 
 jobs:
   test:
@@ -102,7 +97,6 @@ jobs:
       - name: Setup Rust toolchains
         uses: ./cargo-buckal/.github/actions/setup-rust-toolchains
         with:
-          nightly_toolchain: ${{ inputs.nightly_toolchain }}
           targets: ${{ matrix.target }}
 
       # ============================================================
