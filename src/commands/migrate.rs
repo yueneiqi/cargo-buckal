@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, io::Write};
+use std::{fs::OpenOptions, io::Write, path::PathBuf};
 
 use clap::Parser;
 
@@ -22,9 +22,9 @@ pub struct MigrateArgs {
     /// Merge manual edits with generated content
     #[clap(long)]
     pub merge: bool,
-    /// Migrate with buck2 initialized
-    #[clap(long, conflicts_with = "fetch")]
-    pub buck2: bool,
+    /// Initialize Buck2 in the specified directory (defaults to current directory)
+    #[clap(long, value_name = "PATH", default_missing_value = ".", num_args = 0..=1, conflicts_with = "fetch")]
+    pub init: Option<PathBuf>,
     /// Fetch latest bundles from remote repository
     #[clap(long)]
     pub fetch: bool,
@@ -39,13 +39,20 @@ pub fn execute(args: &MigrateArgs) {
 
     // Initialize Buck2 project if requested
     // Compared to `cargo buckal init`, here we only setup Buck2 related files
-    if args.buck2 {
+    if let Some(init_path) = &args.init {
         let cwd = std::env::current_dir().unwrap_or_exit();
+        // Resolve the init path relative to the current directory
+        let init_root = if init_path.is_absolute() {
+            init_path.clone()
+        } else {
+            cwd.join(init_path)
+        };
+
         let existing_root = get_buck2_root().ok();
         let root_for_checks = existing_root
             .as_ref()
             .map(|root| root.as_std_path())
-            .unwrap_or_else(|| cwd.as_path());
+            .unwrap_or_else(|| init_root.as_path());
         let toolchains_dir = root_for_checks.join("toolchains");
         let platforms_dir = root_for_checks.join("platforms");
         if toolchains_dir.is_dir() || platforms_dir.is_dir() {
@@ -56,7 +63,20 @@ pub fn execute(args: &MigrateArgs) {
             std::process::exit(1);
         }
 
+        // Change to init_root directory for Buck2 initialization
+        std::env::set_current_dir(&init_root).unwrap_or_exit_ctx(format!(
+            "failed to change directory to `{}`",
+            init_root.display()
+        ));
+
         Buck2Command::init().execute().unwrap_or_exit();
+
+        // Restore original directory
+        std::env::set_current_dir(&cwd).unwrap_or_exit_ctx(format!(
+            "failed to change directory back to `{}`",
+            cwd.display()
+        ));
+
         let buck2_root = existing_root.unwrap_or_else(|| {
             get_buck2_root().unwrap_or_exit_ctx("failed to get Buck2 project root")
         });
