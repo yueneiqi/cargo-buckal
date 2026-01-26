@@ -517,7 +517,9 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 fn format_buck2_pattern(rel_path: &str) -> String {
-    let trimmed = rel_path.trim_start_matches('/');
+    // Normalize path separators for Buck2 (always use forward slashes)
+    let normalized = rel_path.replace('\\', "/");
+    let trimmed = normalized.trim_start_matches('/');
     if trimmed.is_empty() {
         "//...".to_string()
     } else {

@@ -97,6 +97,8 @@ pub fn execute(args: &BuildArgs) {
     }
 
     let mut relative_path = relative.unwrap().to_string_lossy().into_owned();
+    // Normalize path separators for Buck2 (always use forward slashes)
+    relative_path = relative_path.replace('\\', "/");
     if !relative_path.is_empty() {
         relative_path += "/";
     }
