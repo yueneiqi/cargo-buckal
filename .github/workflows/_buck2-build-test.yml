@@ -148,11 +148,16 @@ jobs:
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
           cargo buckal build --all-targets
-      - name: cargo buckal build (target-platforms)
+      - name: cargo buckal build (--target-platforms)
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
           cargo buckal build --all-targets --target-platforms //platforms:${{ matrix.target }}
+      - name: cargo buckal build (--target)
+        shell: bash
+        run: |
+          cd "${{ inputs.project_dir || inputs.project_name }}"
+          cargo buckal build --all-targets --target ${{ matrix.target }}
 
       # ============================================================
       # cargo buckal test
@@ -163,9 +168,15 @@ jobs:
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
           cargo buckal test --workspace
-      - name: cargo buckal test (target-platforms)
+      - name: cargo buckal test (--target-platforms)
         if: inputs.run_tests
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name }}"
           cargo buckal test --workspace --target-platforms //platforms:${{ matrix.target }}
+      - name: cargo buckal test (--target)
+        if: inputs.run_tests
+        shell: bash
+        run: |
+          cd "${{ inputs.project_dir || inputs.project_name }}"
+          cargo buckal test --workspace --target ${{ matrix.target }}
