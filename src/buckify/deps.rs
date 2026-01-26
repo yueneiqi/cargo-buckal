@@ -56,7 +56,9 @@ fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
                 buck2_root
             )
         })?
-        .to_string_lossy();
+        .to_string_lossy()
+        // Normalize path separators for Buck2 (always use forward slashes)
+        .replace('\\', "/");
 
     let dep_bin_targets: Vec<_> = dep_package
         .targets
