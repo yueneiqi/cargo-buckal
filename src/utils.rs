@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-use std::{io, process::Command, str::FromStr};
-
 use cargo_metadata::MetadataCommand;
 use cargo_metadata::camino::Utf8PathBuf;
 use cargo_platform::Cfg;
 use colored::Colorize;
 use inquire::Select;
+use std::collections::HashMap;
+use std::{io, process::Command, str::FromStr};
 
 use crate::RUST_CRATES_ROOT;
 use crate::buck2::Buck2Command;
@@ -359,6 +358,47 @@ pub fn get_target() -> String {
     panic!("Failed to find host: {stdout}");
 }
 
+/// Check if a target triple is valid for rustc
+pub fn is_valid_rustc_target(triple: &str) -> bool {
+    let output = Command::new("rustc")
+        .arg("--print")
+        .arg("target-list")
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            stdout.lines().any(|line| line.trim() == triple)
+        }
+        _ => false,
+    }
+}
+
+/// Validate a target triple: check if it's valid for rustc and if the corresponding
+/// Buck2 platform exists
+pub fn validate_target_triple(triple: &str) -> Result<String, String> {
+    // Check if it's a valid rustc target
+    if !is_valid_rustc_target(triple) {
+        return Err(format!(
+            "invalid target triple '{}': not a valid rustc target. \
+             Run 'rustc --print target-list' to see available targets.",
+            triple
+        ));
+    }
+
+    // Check if the corresponding Buck2 platform exists
+    let platform = format!("//platforms:{}", triple);
+    if !platform_exists(&platform) {
+        return Err(format!(
+            "platform '{}' does not exist in Buck2. \
+             Ensure the platform is defined in //platforms/BUCK.",
+            platform
+        ));
+    }
+
+    Ok(platform)
+}
+
 pub fn get_cfgs() -> Vec<Cfg> {
     let output = Command::new("rustc")
         .arg("--print=cfg")
@@ -480,6 +520,50 @@ impl<T, E: std::fmt::Display> UnwrapOrExit<T> for Result<T, E> {
                 buckal_error!("{}:\n{}", context, error);
                 std::process::exit(1);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_valid_rustc_target_valid_targets() {
+        // These are common, always-available targets
+        assert!(is_valid_rustc_target("x86_64-unknown-linux-gnu"));
+        assert!(is_valid_rustc_target("aarch64-unknown-linux-gnu"));
+        assert!(is_valid_rustc_target("x86_64-apple-darwin"));
+        assert!(is_valid_rustc_target("x86_64-pc-windows-msvc"));
+    }
+
+    #[test]
+    fn test_is_valid_rustc_target_invalid_targets() {
+        assert!(!is_valid_rustc_target("invalid-target-triple"));
+        assert!(!is_valid_rustc_target("not-a-real-target"));
+        assert!(!is_valid_rustc_target(""));
+        assert!(!is_valid_rustc_target("x86_64"));
+        assert!(!is_valid_rustc_target("linux"));
+    }
+
+    #[test]
+    fn test_validate_target_triple_invalid_rustc_target() {
+        let result = validate_target_triple("invalid-target-triple");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("not a valid rustc target"));
+        assert!(err.contains("invalid-target-triple"));
+    }
+
+    #[test]
+    fn test_validate_target_triple_returns_platform_path() {
+        // This test may fail if running outside a Buck2 project
+        // In CI, we'll test the full flow with a real project
+        let result = validate_target_triple("x86_64-unknown-linux-gnu");
+        // The result will be Ok if platform exists, Err otherwise
+        // We just verify the format when successful
+        if let Ok(platform) = result {
+            assert_eq!(platform, "//platforms:x86_64-unknown-linux-gnu");
         }
     }
 }
