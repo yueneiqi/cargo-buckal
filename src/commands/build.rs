@@ -6,7 +6,7 @@ use crate::{
     buckal_error, buckal_log,
     utils::{
         UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root, get_target,
-        platform_exists,
+        platform_exists, validate_target_triple,
     },
 };
 
@@ -44,8 +44,12 @@ pub struct BuildArgs {
     #[arg(long)]
     pub all_targets: bool,
 
+    /// Build for the target triple (e.g., x86_64-unknown-linux-gnu)
+    #[arg(long, value_name = "TRIPLE", conflicts_with = "target_platforms")]
+    pub target: Option<String>,
+
     /// Build for the target platform (passed to buck2 `--target-platforms`)
-    #[arg(long, value_name = "PLATFORM")]
+    #[arg(long, value_name = "PLATFORM", conflicts_with = "target")]
     pub target_platforms: Option<String>,
 }
 
@@ -125,7 +129,16 @@ pub fn execute(args: &BuildArgs) {
         std::process::exit(1);
     }
 
-    let target_platforms = if let Some(platform) = &args.target_platforms {
+    let target_platforms = if let Some(triple) = &args.target {
+        // Validate the target triple and get the corresponding platform
+        match validate_target_triple(triple) {
+            Ok(platform) => Some(platform),
+            Err(e) => {
+                buckal_error!(e);
+                std::process::exit(1);
+            }
+        }
+    } else if let Some(platform) = &args.target_platforms {
         Some(platform.clone())
     } else {
         let platform = format!("//platforms:{}", get_target());
@@ -482,6 +495,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(args.validate_target_selection().is_ok());
@@ -495,6 +509,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(args.validate_target_selection().is_ok());
@@ -509,6 +524,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target: None,
             target_platforms: None,
         };
         assert!(args.validate_target_selection().is_ok());
@@ -523,6 +539,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target: None,
             target_platforms: None,
         };
         assert!(args.validate_target_selection().is_err());
@@ -539,6 +556,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(!args.has_target_selection());
@@ -552,6 +570,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(args.has_target_selection());
@@ -565,6 +584,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(args.has_target_selection());
@@ -578,6 +598,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target: None,
             target_platforms: None,
         };
         assert!(args.has_target_selection());
@@ -594,6 +615,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(!args.has_other_target_selection());
@@ -607,6 +629,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(args.has_other_target_selection());
@@ -620,6 +643,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
         assert!(args.has_other_target_selection());
@@ -633,6 +657,7 @@ mod tests {
             example: vec![],
             examples: false,
             all_targets: true,
+            target: None,
             target_platforms: None,
         };
         assert!(!args.has_other_target_selection());
@@ -847,6 +872,7 @@ mod tests {
             example: vec!["demo*".to_string()],
             examples: false,
             all_targets: false,
+            target: None,
             target_platforms: None,
         };
 

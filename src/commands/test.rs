@@ -1,8 +1,9 @@
 use crate::{
     buck2::Buck2Command,
+    buckal_error,
     utils::{
         UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_buck2_root, get_target,
-        platform_exists,
+        platform_exists, validate_target_triple,
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -69,8 +70,12 @@ pub struct TestArgs {
     #[arg(short, long, value_name = "N")]
     pub jobs: Option<usize>,
 
+    /// Build for the target triple (e.g., x86_64-unknown-linux-gnu)
+    #[arg(long, value_name = "TRIPLE", conflicts_with = "target_platforms")]
+    pub target: Option<String>,
+
     /// Build for the target platform (passed to buck2 --target-platforms)
-    #[arg(long, value_name = "PLATFORM")]
+    #[arg(long, value_name = "PLATFORM", conflicts_with = "target")]
     pub target_platforms: Option<String>,
 
     /// Build artifacts in release mode, with optimizations
@@ -140,7 +145,16 @@ pub fn execute(args: &TestArgs) {
         cmd = cmd.arg("-j").arg(jobs.to_string());
     }
 
-    let target_platforms = if let Some(platform) = &args.target_platforms {
+    let target_platforms = if let Some(triple) = &args.target {
+        // Validate the target triple and get the corresponding platform
+        match validate_target_triple(triple) {
+            Ok(platform) => Some(platform),
+            Err(e) => {
+                buckal_error!(e);
+                std::process::exit(1);
+            }
+        }
+    } else if let Some(platform) = &args.target_platforms {
         Some(platform.clone())
     } else {
         let platform = format!("//platforms:{}", get_target());
