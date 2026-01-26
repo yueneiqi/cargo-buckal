@@ -1,0 +1,258 @@
+# Test --target option for cargo buckal build/test
+#
+# This workflow tests the --target <triple> option:
+# 1. Unit tests for target validation functions
+# 2. CLI argument conflict tests (--target vs --target-platforms)
+# 3. Integration tests with valid/invalid target triples
+
+name: Test --target option
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-workspaces: .
+          cache-directories: ./target
+
+      - name: Run unit tests
+        run: cargo test --all
+
+  cli-conflict-test:
+    name: CLI argument conflict test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-workspaces: .
+          cache-directories: ./target
+
+      - name: Build cargo-buckal
+        run: cargo build
+
+      - name: Test --target and --target-platforms conflict (build)
+        shell: bash
+        run: |
+          set +e
+          output=$(./target/debug/cargo-buckal buckal build \
+            --target x86_64-unknown-linux-gnu \
+            --target-platforms //platforms:x86_64-unknown-linux-gnu 2>&1)
+          exit_code=$?
+          set -e
+
+          echo "Output: $output"
+          echo "Exit code: $exit_code"
+
+          # Should fail due to argument conflict
+          if [ $exit_code -eq 0 ]; then
+            echo "ERROR: Expected command to fail due to argument conflict"
+            exit 1
+          fi
+
+          # Check that the error mentions the conflict
+          if echo "$output" | grep -qi "cannot be used with"; then
+            echo "OK: Correct conflict error message"
+          elif echo "$output" | grep -qi "conflict"; then
+            echo "OK: Conflict detected"
+          else
+            echo "WARNING: Error message doesn't mention conflict, but command did fail"
+          fi
+
+      - name: Test --target and --target-platforms conflict (test)
+        shell: bash
+        run: |
+          set +e
+          output=$(./target/debug/cargo-buckal buckal test \
+            --target x86_64-unknown-linux-gnu \
+            --target-platforms //platforms:x86_64-unknown-linux-gnu 2>&1)
+          exit_code=$?
+          set -e
+
+          echo "Output: $output"
+          echo "Exit code: $exit_code"
+
+          # Should fail due to argument conflict
+          if [ $exit_code -eq 0 ]; then
+            echo "ERROR: Expected command to fail due to argument conflict"
+            exit 1
+          fi
+
+          echo "OK: Conflict correctly detected for test command"
+
+  invalid-target-test:
+    name: Invalid target validation test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-workspaces: .
+          cache-directories: ./target
+
+      - name: Build cargo-buckal
+        run: cargo build
+
+      - name: Test --target with invalid triple
+        shell: bash
+        run: |
+          # Create a minimal Buck2 project structure for testing
+          mkdir -p /tmp/test-project/platforms
+          cd /tmp/test-project
+
+          cat > .buckconfig << 'EOF'
+          [cells]
+          root = .
+          prelude = prelude
+          toolchains = toolchains
+          none = none
+
+          [external_cells]
+          prelude = bundled
+          EOF
+
+          cat > .buckroot << 'EOF'
+          EOF
+
+          cat > BUCK << 'EOF'
+          EOF
+
+          cat > Cargo.toml << 'EOF'
+          [package]
+          name = "test-project"
+          version = "0.1.0"
+          edition = "2021"
+
+          [lib]
+          path = "src/lib.rs"
+          EOF
+
+          mkdir -p src
+          echo "// empty" > src/lib.rs
+
+          # Test with invalid target triple
+          set +e
+          output=$($GITHUB_WORKSPACE/target/debug/cargo-buckal buckal build \
+            --target invalid-fake-triple 2>&1)
+          exit_code=$?
+          set -e
+
+          echo "Output: $output"
+          echo "Exit code: $exit_code"
+
+          # Should fail with invalid target error
+          if [ $exit_code -eq 0 ]; then
+            echo "ERROR: Expected command to fail with invalid target"
+            exit 1
+          fi
+
+          # Check error message mentions invalid target
+          if echo "$output" | grep -qi "not a valid rustc target"; then
+            echo "OK: Correct error message for invalid target"
+          else
+            echo "ERROR: Expected 'not a valid rustc target' in error message"
+            echo "Actual output: $output"
+            exit 1
+          fi
+
+  integration-test:
+    name: Integration test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout cargo-buckal
+        uses: actions/checkout@v4
+        with:
+          path: cargo-buckal
+
+      - name: Setup Windows environment
+        if: runner.os == 'Windows'
+        uses: ./cargo-buckal/.github/actions/setup-windows
+
+      - name: Setup Rust toolchains
+        uses: ./cargo-buckal/.github/actions/setup-rust-toolchains
+        with:
+          nightly_toolchain: nightly-2025-08-01
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cargo-buckal
+          cache-all-crates: true
+
+      - name: Install Buck2
+        uses: ./cargo-buckal/.github/actions/install-buck2
+
+      - name: Build and install cargo-buckal
+        shell: bash
+        run: |
+          cd cargo-buckal
+          cargo install --locked --path .
+
+      - name: Clone fd project
+        shell: bash
+        run: |
+          git clone --depth 1 --branch v10.3.0 https://github.com/sharkdp/fd.git fd
+
+      - name: Generate Buck2 files
+        shell: bash
+        run: |
+          cd fd
+          echo "ignore_tests = false" > buckal.toml
+          cargo buckal migrate --init
+
+      - name: Test --target with valid triple
+        shell: bash
+        run: |
+          cd fd
+          echo "Testing: cargo buckal build --target ${{ matrix.target }}"
+          cargo buckal build --target ${{ matrix.target }}
+          echo "OK: --target with valid triple works for build"
+
+      - name: Test --target with test command
+        shell: bash
+        run: |
+          cd fd
+          echo "Testing: cargo buckal test --target ${{ matrix.target }}"
+          cargo buckal test --lib --target ${{ matrix.target }}
+          echo "OK: --target with valid triple works for test"
