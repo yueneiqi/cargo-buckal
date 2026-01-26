@@ -1,0 +1,172 @@
+# monorepo-demo Integration Test - Verify monorepo workflow with Buck2
+#
+# This workflow tests two approaches for initializing Buck2 in a monorepo:
+# 1. Two-step: `cargo buckal init --repo` at root + `cargo buckal migrate` in subdirectory
+# 2. Shortcut: `cargo buckal migrate --init ../..` from subdirectory
+
+name: Integration Test monorepo-demo
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+
+jobs:
+  # Test two-step approach: init --repo at root, then migrate in subdirectory
+  test_two_step:
+    name: two-step (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+          - name: macos
+            os: macos-14
+          - name: windows
+            os: windows-2022
+
+    steps:
+      - name: Checkout cargo-buckal
+        uses: actions/checkout@v6
+        with:
+          path: cargo-buckal
+
+      - name: Setup Windows environment
+        uses: ./cargo-buckal/.github/actions/setup-windows
+
+      - name: Clone monorepo-demo
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/yueneiqi/monorepo-demo.git monorepo-demo
+
+      - name: Setup Rust toolchains
+        uses: ./cargo-buckal/.github/actions/setup-rust-toolchains
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            cargo-buckal -> target
+          cache-all-crates: true
+
+      - name: Install Buck2
+        uses: ./cargo-buckal/.github/actions/install-buck2
+
+      - name: Install cargo-buckal
+        shell: bash
+        run: |
+          cd cargo-buckal
+          cargo install --locked --path .
+
+      - name: 'Step 1: cargo buckal init --repo at repo root'
+        shell: bash
+        run: |
+          cd monorepo-demo
+          cargo buckal init --repo
+
+      - name: 'Step 2: cargo buckal migrate in project/sub-lib'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-lib
+          cargo buckal migrate
+
+      - name: 'Step 3: cargo buckal migrate in project/sub-app'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-app
+          cargo buckal migrate
+
+      - name: 'Build: cargo buckal build in project/sub-lib'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-lib
+          cargo buckal build
+
+      - name: 'Build: cargo buckal build in project/sub-app'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-app
+          cargo buckal build
+
+  # Test shortcut approach: migrate --init ../.. from subdirectory
+  test_shortcut:
+    name: shortcut (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+          - name: macos
+            os: macos-14
+          - name: windows
+            os: windows-2022
+
+    steps:
+      - name: Checkout cargo-buckal
+        uses: actions/checkout@v6
+        with:
+          path: cargo-buckal
+
+      - name: Setup Windows environment
+        uses: ./cargo-buckal/.github/actions/setup-windows
+
+      - name: Clone monorepo-demo
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/yueneiqi/monorepo-demo.git monorepo-demo
+
+      - name: Setup Rust toolchains
+        uses: ./cargo-buckal/.github/actions/setup-rust-toolchains
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            cargo-buckal -> target
+          cache-all-crates: true
+
+      - name: Install Buck2
+        uses: ./cargo-buckal/.github/actions/install-buck2
+
+      - name: Install cargo-buckal
+        shell: bash
+        run: |
+          cd cargo-buckal
+          cargo install --locked --path .
+
+      - name: 'Shortcut: cargo buckal migrate --init ../.. from project/sub-lib'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-lib
+          cargo buckal migrate --init ../..
+
+      - name: 'Migrate: cargo buckal migrate in project/sub-app'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-app
+          cargo buckal migrate
+
+      - name: 'Build: cargo buckal build in project/sub-lib'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-lib
+          cargo buckal build
+
+      - name: 'Build: cargo buckal build in project/sub-app'
+        shell: bash
+        run: |
+          cd monorepo-demo/project/sub-app
+          cargo buckal build
