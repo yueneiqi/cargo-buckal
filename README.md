@@ -23,6 +23,37 @@ Common commands:
 - `cargo buckal clean`: clean `buck-out` directory
 - `cargo buckal version`: print version information
 
+## Monorepo usage
+
+For monorepos where `Cargo.toml` is not at the repository root, there are two approaches:
+
+### Two-step approach
+
+1. Initialize Buck2 at the repository root:
+
+   ```bash
+   cd /path/to/monorepo
+   cargo buckal init --repo
+   ```
+
+2. Migrate each Rust project from its directory:
+
+   ```bash
+   cd project/my-rust-app
+   cargo buckal migrate
+   ```
+
+### Shortcut approach
+
+Use `--init <path>` to initialize Buck2 at a specified directory while migrating:
+
+```bash
+cd project/my-rust-app
+cargo buckal migrate --init ../..
+```
+
+This is equivalent to running `init --repo` at `../..` followed by `migrate` in the current directory.
+
 ## Supported platforms
 
 Platform-aware dependency mapping and bundled sample platforms currently target these Rust tier-1
