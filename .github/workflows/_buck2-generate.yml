@@ -129,7 +129,7 @@ jobs:
         shell: bash
         run: |
           cd "${{ inputs.project_dir || inputs.project_name || 'cargo-buckal' }}"
-          cargo buckal migrate --buck2
+          cargo buckal migrate --init
 
       - name: Apply patches
         if: inputs.apply_patches
