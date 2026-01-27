@@ -41,12 +41,11 @@ pub fn execute(args: &MigrateArgs) {
     // Compared to `cargo buckal init`, here we only setup Buck2 related files
     if let Some(init_path) = &args.init {
         let cwd = std::env::current_dir().unwrap_or_exit();
-        // Resolve the init path relative to the current directory
-        let init_root = if init_path.is_absolute() {
-            init_path.clone()
-        } else {
-            cwd.join(init_path)
-        };
+        // Resolve and canonicalize the init path
+        let init_root = std::fs::canonicalize(init_path).unwrap_or_exit_ctx(format!(
+            "failed to resolve init path `{}`",
+            init_path.display()
+        ));
 
         let existing_root = get_buck2_root().ok();
         let root_for_checks = existing_root
