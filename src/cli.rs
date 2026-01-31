@@ -91,3 +91,122 @@ impl Cli {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::validate_target_triple;
+
+    #[test]
+    fn test_cli_build_accepts_target() {
+        let cli = Cli::try_parse_from([
+            "cargo",
+            "buckal",
+            "build",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+        ])
+        .expect("failed to parse build args with --target");
+
+        match cli.command {
+            Commands::Buckal(args) => match args.subcommands {
+                Some(BuckalSubCommands::Build(build_args)) => {
+                    assert_eq!(
+                        build_args.target.as_deref(),
+                        Some("x86_64-unknown-linux-gnu")
+                    );
+                    assert!(build_args.target_platforms.is_none());
+                }
+                other => panic!("expected build subcommand, got {other:?}"),
+            },
+        }
+    }
+
+    #[test]
+    fn test_cli_test_accepts_target() {
+        let cli = Cli::try_parse_from([
+            "cargo",
+            "buckal",
+            "test",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+        ])
+        .expect("failed to parse test args with --target");
+
+        match cli.command {
+            Commands::Buckal(args) => match args.subcommands {
+                Some(BuckalSubCommands::Test(test_args)) => {
+                    assert_eq!(
+                        test_args.target.as_deref(),
+                        Some("x86_64-unknown-linux-gnu")
+                    );
+                    assert!(test_args.target_platforms.is_none());
+                }
+                other => panic!("expected test subcommand, got {other:?}"),
+            },
+        }
+    }
+
+    #[test]
+    fn test_cli_build_rejects_target_and_target_platforms() {
+        let result = Cli::try_parse_from([
+            "cargo",
+            "buckal",
+            "build",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--target-platforms",
+            "//platforms:x86_64-unknown-linux-gnu",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_test_rejects_target_and_target_platforms() {
+        let result = Cli::try_parse_from([
+            "cargo",
+            "buckal",
+            "test",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--target-platforms",
+            "//platforms:x86_64-unknown-linux-gnu",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_build_invalid_target_fails_validation() {
+        let cli =
+            Cli::try_parse_from(["cargo", "buckal", "build", "--target", "not-a-real-target"])
+                .expect("failed to parse build args with invalid --target");
+
+        match cli.command {
+            Commands::Buckal(args) => match args.subcommands {
+                Some(BuckalSubCommands::Build(build_args)) => {
+                    let err = validate_target_triple(build_args.target.as_deref().unwrap())
+                        .expect_err("expected invalid target triple to fail validation");
+                    assert!(err.contains("not a valid rustc target"));
+                }
+                other => panic!("expected build subcommand, got {other:?}"),
+            },
+        }
+    }
+
+    #[test]
+    fn test_cli_test_invalid_target_fails_validation() {
+        let cli = Cli::try_parse_from(["cargo", "buckal", "test", "--target", "not-a-real-target"])
+            .expect("failed to parse test args with invalid --target");
+
+        match cli.command {
+            Commands::Buckal(args) => match args.subcommands {
+                Some(BuckalSubCommands::Test(test_args)) => {
+                    let err = validate_target_triple(test_args.target.as_deref().unwrap())
+                        .expect_err("expected invalid target triple to fail validation");
+                    assert!(err.contains("not a valid rustc target"));
+                }
+                other => panic!("expected test subcommand, got {other:?}"),
+            },
+        }
+    }
+}
