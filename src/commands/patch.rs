@@ -7,8 +7,8 @@ use crate::{
     buck::parse_buck_file,
     buck::patch_buck_rules,
     buckal_log, buckal_note,
-    buckify::{buckify_dep_node, buckify_root_node, cross, gen_buck_content, vendor_package},
     buckify::flush_root,
+    buckify::{buckify_dep_node, buckify_root_node, cross, gen_buck_content, vendor_package},
     cache::BuckalCache,
     config::RepoConfig,
     context::BuckalContext,
@@ -44,8 +44,8 @@ pub fn execute(args: &PatchArgs) {
 
 fn do_execute(args: &PatchArgs) -> Result<()> {
     let (dep_name, target_version) = parse_patch_spec(&args.spec);
-    let target_version = target_version
-        .ok_or_else(|| anyhow!("version is required: use <DEP>@<VERSION> format"))?;
+    let target_version =
+        target_version.ok_or_else(|| anyhow!("version is required: use <DEP>@<VERSION> format"))?;
 
     // Build initial context and resolve
     let ctx = BuckalContext::new();
@@ -125,10 +125,7 @@ fn do_execute(args: &PatchArgs) -> Result<()> {
     Ok(())
 }
 
-fn regenerate_node_buck(
-    pkg_id: &cargo_metadata::PackageId,
-    ctx: &BuckalContext,
-) -> Result<()> {
+fn regenerate_node_buck(pkg_id: &cargo_metadata::PackageId, ctx: &BuckalContext) -> Result<()> {
     let node = ctx
         .nodes_map
         .get(pkg_id)
@@ -139,16 +136,13 @@ fn regenerate_node_buck(
         .ok_or_else(|| anyhow!("package not found for {:?}", pkg_id))?;
 
     // Skip root package
-    if let Some(root) = &ctx.root {
-        if pkg_id == &root.id {
-            return Ok(());
-        }
+    if let Some(root) = &ctx.root
+        && pkg_id == &root.id
+    {
+        return Ok(());
     }
 
-    buckal_log!(
-        "Flushing",
-        format!("{} v{}", package.name, package.version)
-    );
+    buckal_log!("Flushing", format!("{} v{}", package.name, package.version));
 
     // Determine vendor directory
     let vendor_dir = if package.source.is_none() {

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use cargo_metadata::PackageId;
-use daggy::{Dag, NodeIndex, WouldCycle, Walker};
+use daggy::{Dag, NodeIndex, Walker, WouldCycle};
 use serde::{Deserialize, Serialize};
 
 use crate::cache::{BuckalHash, Fingerprint};
@@ -97,20 +97,13 @@ impl BuckalResolve {
                 for dep in &node.deps {
                     if let Some(&child_idx) = index_map.get(&dep.pkg) {
                         // Ignore WouldCycle errors - shouldn't happen for valid Cargo graphs
-                        let _: Result<_, WouldCycle<()>> =
-                            dag.add_edge(parent_idx, child_idx, ());
+                        let _: Result<_, WouldCycle<()>> = dag.add_edge(parent_idx, child_idx, ());
                     }
                 }
             }
         }
 
         Self { dag, index_map }
-    }
-
-    pub fn get_node(&self, pkg_id: &PackageId) -> Option<&BuckalNode> {
-        self.index_map
-            .get(pkg_id)
-            .map(|&idx| &self.dag[idx])
     }
 
     pub fn dependents(&self, pkg_id: &PackageId) -> Vec<&BuckalNode> {
@@ -124,6 +117,7 @@ impl BuckalResolve {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn dependencies(&self, pkg_id: &PackageId) -> Vec<&BuckalNode> {
         let Some(&idx) = self.index_map.get(pkg_id) else {
             return Vec::new();
@@ -140,10 +134,7 @@ impl BuckalResolve {
             .raw_nodes()
             .iter()
             .map(|n| &n.weight)
-            .find(|node| {
-                node.name == name
-                    && version.map_or(true, |v| node.version == v)
-            })
+            .find(|node| node.name == name && version.is_none_or(|v| node.version == v))
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = &BuckalNode> {
@@ -157,7 +148,10 @@ mod tests {
 
     fn make_pkg_id(name: &str) -> PackageId {
         PackageId {
-            repr: format!("registry+https://github.com/rust-lang/crates.io-index#{}@1.0.0", name),
+            repr: format!(
+                "registry+https://github.com/rust-lang/crates.io-index#{}@1.0.0",
+                name
+            ),
         }
     }
 
@@ -298,9 +292,18 @@ mod tests {
         let resolve = resolve_from_manifest("/tmp/buckal-test/first-party-demo");
 
         // Should contain the 3 first-party crates
-        assert!(resolve.find_by_name("demo-root", None).is_some(), "demo-root not found");
-        assert!(resolve.find_by_name("demo-lib", None).is_some(), "demo-lib not found");
-        assert!(resolve.find_by_name("demo-util", None).is_some(), "demo-util not found");
+        assert!(
+            resolve.find_by_name("demo-root", None).is_some(),
+            "demo-root not found"
+        );
+        assert!(
+            resolve.find_by_name("demo-lib", None).is_some(),
+            "demo-lib not found"
+        );
+        assert!(
+            resolve.find_by_name("demo-util", None).is_some(),
+            "demo-util not found"
+        );
 
         // All 3 first-party crates should be FirstParty
         for name in &["demo-root", "demo-lib", "demo-util"] {
@@ -317,7 +320,10 @@ mod tests {
         let root_node = resolve.find_by_name("demo-root", None).unwrap();
         match &root_node.kind {
             NodeKind::FirstParty { relative_path } => {
-                assert_eq!(relative_path, "", "demo-root should have empty relative_path");
+                assert_eq!(
+                    relative_path, "",
+                    "demo-root should have empty relative_path"
+                );
             }
             _ => panic!("expected FirstParty"),
         }
@@ -349,7 +355,8 @@ mod tests {
 
         // demo-lib depends on serde, so serde's dependents should include demo-lib
         let serde_dependents = resolve.dependents(&serde_node.package_id);
-        let serde_dependent_names: Vec<&str> = serde_dependents.iter().map(|n| n.name.as_str()).collect();
+        let serde_dependent_names: Vec<&str> =
+            serde_dependents.iter().map(|n| n.name.as_str()).collect();
         assert!(
             serde_dependent_names.contains(&"demo-lib"),
             "serde dependents should include demo-lib, got {:?}",
@@ -359,12 +366,24 @@ mod tests {
         // demo-lib's dependencies should include demo-util and serde
         let lib_deps = resolve.dependencies(&lib_node.package_id);
         let lib_dep_names: Vec<&str> = lib_deps.iter().map(|n| n.name.as_str()).collect();
-        assert!(lib_dep_names.contains(&"demo-util"), "demo-lib should depend on demo-util, got {:?}", lib_dep_names);
-        assert!(lib_dep_names.contains(&"serde"), "demo-lib should depend on serde, got {:?}", lib_dep_names);
+        assert!(
+            lib_dep_names.contains(&"demo-util"),
+            "demo-lib should depend on demo-util, got {:?}",
+            lib_dep_names
+        );
+        assert!(
+            lib_dep_names.contains(&"serde"),
+            "demo-lib should depend on serde, got {:?}",
+            lib_dep_names
+        );
 
         // Total node count should include all transitive deps
         let total_nodes = resolve.nodes().count();
-        assert!(total_nodes >= 5, "expected at least 5 nodes (3 first-party + serde + serde_derive), got {}", total_nodes);
+        assert!(
+            total_nodes >= 5,
+            "expected at least 5 nodes (3 first-party + serde + serde_derive), got {}",
+            total_nodes
+        );
 
         // Cache construction should work
         let cache = crate::cache::BuckalCache::from_resolve(
@@ -373,7 +392,10 @@ mod tests {
         );
         // Verify cache has entries for all nodes
         let cache_str = toml::to_string_pretty(&cache).unwrap();
-        assert!(cache_str.contains("fingerprints"), "cache should contain fingerprints section");
+        assert!(
+            cache_str.contains("fingerprints"),
+            "cache should contain fingerprints section"
+        );
     }
 
     #[test]
@@ -382,14 +404,26 @@ mod tests {
         let resolve = resolve_from_manifest("/tmp/buckal-test/monorepo-demo/project");
 
         // Should contain the 2 workspace members (virtual workspace - no root package)
-        assert!(resolve.find_by_name("sub-lib", None).is_some(), "sub-lib not found");
-        assert!(resolve.find_by_name("sub-app", None).is_some(), "sub-app not found");
+        assert!(
+            resolve.find_by_name("sub-lib", None).is_some(),
+            "sub-lib not found"
+        );
+        assert!(
+            resolve.find_by_name("sub-app", None).is_some(),
+            "sub-app not found"
+        );
 
         // Both should be FirstParty
         let sub_lib = resolve.find_by_name("sub-lib", None).unwrap();
         let sub_app = resolve.find_by_name("sub-app", None).unwrap();
-        assert!(matches!(&sub_lib.kind, NodeKind::FirstParty { .. }), "sub-lib should be FirstParty");
-        assert!(matches!(&sub_app.kind, NodeKind::FirstParty { .. }), "sub-app should be FirstParty");
+        assert!(
+            matches!(&sub_lib.kind, NodeKind::FirstParty { .. }),
+            "sub-lib should be FirstParty"
+        );
+        assert!(
+            matches!(&sub_app.kind, NodeKind::FirstParty { .. }),
+            "sub-app should be FirstParty"
+        );
 
         // Verify relative paths
         match &sub_lib.kind {
@@ -416,7 +450,8 @@ mod tests {
 
         // sub-lib's dependents should include sub-app
         let lib_dependents = resolve.dependents(&sub_lib.package_id);
-        let lib_dependent_names: Vec<&str> = lib_dependents.iter().map(|n| n.name.as_str()).collect();
+        let lib_dependent_names: Vec<&str> =
+            lib_dependents.iter().map(|n| n.name.as_str()).collect();
         assert!(
             lib_dependent_names.contains(&"sub-app"),
             "sub-lib dependents should include sub-app, got {:?}",
@@ -442,7 +477,10 @@ mod tests {
             &cargo_metadata::camino::Utf8PathBuf::from("/tmp/buckal-test/monorepo-demo/project"),
         );
         let cache_str = toml::to_string_pretty(&cache).unwrap();
-        assert!(cache_str.contains("fingerprints"), "cache should contain fingerprints section");
+        assert!(
+            cache_str.contains("fingerprints"),
+            "cache should contain fingerprints section"
+        );
     }
 
     #[test]
@@ -452,7 +490,10 @@ mod tests {
 
         // fd-find is the only first-party package
         let fd = resolve.find_by_name("fd-find", None).unwrap();
-        assert!(matches!(&fd.kind, NodeKind::FirstParty { .. }), "fd-find should be FirstParty");
+        assert!(
+            matches!(&fd.kind, NodeKind::FirstParty { .. }),
+            "fd-find should be FirstParty"
+        );
         match &fd.kind {
             NodeKind::FirstParty { relative_path } => {
                 assert_eq!(relative_path, "", "fd-find is at workspace root");
@@ -461,10 +502,20 @@ mod tests {
         }
 
         // All other packages should be ThirdParty
-        let third_party_count = resolve.nodes().filter(|n| matches!(&n.kind, NodeKind::ThirdParty)).count();
-        let first_party_count = resolve.nodes().filter(|n| matches!(&n.kind, NodeKind::FirstParty { .. })).count();
+        let third_party_count = resolve
+            .nodes()
+            .filter(|n| matches!(&n.kind, NodeKind::ThirdParty))
+            .count();
+        let first_party_count = resolve
+            .nodes()
+            .filter(|n| matches!(&n.kind, NodeKind::FirstParty { .. }))
+            .count();
         assert_eq!(first_party_count, 1, "only fd-find is first-party");
-        assert!(third_party_count >= 80, "fd has a large transitive dep graph, got {}", third_party_count);
+        assert!(
+            third_party_count >= 80,
+            "fd has a large transitive dep graph, got {}",
+            third_party_count
+        );
 
         // Total nodes should match the full resolve graph (~103 packages)
         let total = resolve.nodes().count();
@@ -487,7 +538,8 @@ mod tests {
         let clap = resolve.find_by_name("clap", None).unwrap();
         assert!(matches!(&clap.kind, NodeKind::ThirdParty));
         let clap_dependents = resolve.dependents(&clap.package_id);
-        let clap_dependent_names: Vec<&str> = clap_dependents.iter().map(|n| n.name.as_str()).collect();
+        let clap_dependent_names: Vec<&str> =
+            clap_dependents.iter().map(|n| n.name.as_str()).collect();
         assert!(
             clap_dependent_names.contains(&"fd-find"),
             "clap dependents should include fd-find, got {:?}",
@@ -525,11 +577,18 @@ mod tests {
         let cache2 = crate::cache::BuckalCache::from_resolve(&resolve, &ws_root);
         let s1 = toml::to_string_pretty(&cache1).unwrap();
         let s2 = toml::to_string_pretty(&cache2).unwrap();
-        assert_eq!(s1, s2, "cache should be deterministic across repeated construction");
+        assert_eq!(
+            s1, s2,
+            "cache should be deterministic across repeated construction"
+        );
         assert!(s1.contains("fingerprints"));
 
         // Diff of identical caches should produce no changes
         let diff = cache1.diff(&cache2, &ws_root);
-        assert!(diff.changes.is_empty(), "diff of identical caches should be empty, got {} changes", diff.changes.len());
+        assert!(
+            diff.changes.is_empty(),
+            "diff of identical caches should be empty, got {} changes",
+            diff.changes.len()
+        );
     }
 }

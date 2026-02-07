@@ -145,7 +145,9 @@ impl RepoConfig {
             String::new()
         };
 
-        let mut doc = content.parse::<DocumentMut>().context("failed to parse buckal.toml")?;
+        let mut doc = content
+            .parse::<DocumentMut>()
+            .context("failed to parse buckal.toml")?;
 
         // Ensure [patch] table exists
         if !doc.contains_key("patch") {
@@ -167,7 +169,10 @@ impl RepoConfig {
         let mut entry = toml_edit::InlineTable::new();
         entry.insert("from", toml_edit::Value::from(from_version));
         entry.insert("to", toml_edit::Value::from(to_version));
-        version_table.insert(dep_name, toml_edit::Item::Value(toml_edit::Value::InlineTable(entry)));
+        version_table.insert(
+            dep_name,
+            toml_edit::Item::Value(toml_edit::Value::InlineTable(entry)),
+        );
 
         fs::write(&path, doc.to_string()).context("failed to write buckal.toml")?;
         Ok(())
