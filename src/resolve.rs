@@ -450,4 +450,94 @@ mod tests {
         let cache_str = toml::to_string_pretty(&cache).unwrap();
         assert!(cache_str.contains("fingerprints"), "cache should contain fingerprints section");
     }
+
+    #[test]
+    fn test_fd_find_dag() {
+        let Some(resolve) = resolve_from_manifest("/tmp/buckal-test/fd") else {
+            eprintln!("skipping: fd not cloned at /tmp/buckal-test/fd");
+            return;
+        };
+
+        // fd-find is the only first-party package
+        let fd = resolve.find_by_name("fd-find", None).unwrap();
+        assert!(matches!(&fd.kind, NodeKind::FirstParty { .. }), "fd-find should be FirstParty");
+        match &fd.kind {
+            NodeKind::FirstParty { relative_path } => {
+                assert_eq!(relative_path, "", "fd-find is at workspace root");
+            }
+            _ => panic!("expected FirstParty"),
+        }
+
+        // All other packages should be ThirdParty
+        let third_party_count = resolve.nodes().filter(|n| matches!(&n.kind, NodeKind::ThirdParty)).count();
+        let first_party_count = resolve.nodes().filter(|n| matches!(&n.kind, NodeKind::FirstParty { .. })).count();
+        assert_eq!(first_party_count, 1, "only fd-find is first-party");
+        assert!(third_party_count >= 80, "fd has a large transitive dep graph, got {}", third_party_count);
+
+        // Total nodes should match the full resolve graph (~103 packages)
+        let total = resolve.nodes().count();
+        assert!(total >= 100, "expected at least 100 nodes, got {}", total);
+        assert_eq!(total, first_party_count + third_party_count);
+
+        // Spot-check key dependencies of fd-find
+        let fd_deps = resolve.dependencies(&fd.package_id);
+        let fd_dep_names: Vec<&str> = fd_deps.iter().map(|n| n.name.as_str()).collect();
+        for expected in &["regex", "clap", "ignore", "anyhow", "jiff"] {
+            assert!(
+                fd_dep_names.contains(expected),
+                "fd-find should depend on {}, got {:?}",
+                expected,
+                fd_dep_names
+            );
+        }
+
+        // clap's dependents should include fd-find
+        let clap = resolve.find_by_name("clap", None).unwrap();
+        assert!(matches!(&clap.kind, NodeKind::ThirdParty));
+        let clap_dependents = resolve.dependents(&clap.package_id);
+        let clap_dependent_names: Vec<&str> = clap_dependents.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            clap_dependent_names.contains(&"fd-find"),
+            "clap dependents should include fd-find, got {:?}",
+            clap_dependent_names
+        );
+
+        // Verify a transitive dependency chain: fd-find -> regex -> regex-syntax
+        let regex_node = resolve.find_by_name("regex", None).unwrap();
+        let regex_deps = resolve.dependencies(&regex_node.package_id);
+        let regex_dep_names: Vec<&str> = regex_deps.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            regex_dep_names.contains(&"regex-syntax"),
+            "regex should depend on regex-syntax, got {:?}",
+            regex_dep_names
+        );
+
+        // regex-syntax's dependents should include both regex and fd-find (fd depends on it directly)
+        let regex_syntax = resolve.find_by_name("regex-syntax", None).unwrap();
+        let rs_dependents = resolve.dependents(&regex_syntax.package_id);
+        let rs_dependent_names: Vec<&str> = rs_dependents.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            rs_dependent_names.contains(&"regex"),
+            "regex-syntax dependents should include regex, got {:?}",
+            rs_dependent_names
+        );
+
+        // find_by_name with version filtering
+        let clap_version = &clap.version;
+        assert!(resolve.find_by_name("clap", Some(clap_version)).is_some());
+        assert!(resolve.find_by_name("clap", Some("0.0.0")).is_none());
+
+        // Cache construction and fingerprint determinism
+        let ws_root = cargo_metadata::camino::Utf8PathBuf::from("/tmp/buckal-test/fd");
+        let cache1 = crate::cache::BuckalCache::from_resolve(&resolve, &ws_root);
+        let cache2 = crate::cache::BuckalCache::from_resolve(&resolve, &ws_root);
+        let s1 = toml::to_string_pretty(&cache1).unwrap();
+        let s2 = toml::to_string_pretty(&cache2).unwrap();
+        assert_eq!(s1, s2, "cache should be deterministic across repeated construction");
+        assert!(s1.contains("fingerprints"));
+
+        // Diff of identical caches should produce no changes
+        let diff = cache1.diff(&cache2, &ws_root);
+        assert!(diff.changes.is_empty(), "diff of identical caches should be empty, got {} changes", diff.changes.len());
+    }
 }
