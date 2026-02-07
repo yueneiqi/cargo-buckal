@@ -12,6 +12,7 @@ use crate::{
     buckify::flush_root,
     cache::BuckalCache,
     context::BuckalContext,
+    resolve::BuckalResolve,
     utils::{UnwrapOrExit, check_buck2_package, ensure_prerequisites, get_last_cache, section},
 };
 
@@ -62,7 +63,10 @@ pub fn execute(args: &AddArgs) {
     let ctx = BuckalContext::new();
     flush_root(&ctx);
 
-    let new_cache = BuckalCache::new(&ctx.nodes_map, &ctx.workspace_root);
+    let new_cache = {
+        let resolve = BuckalResolve::from_context(&ctx);
+        BuckalCache::from_resolve(&resolve, &ctx.workspace_root)
+    };
     let changes = new_cache.diff(&last_cache, &ctx.workspace_root);
 
     changes.apply(&ctx);

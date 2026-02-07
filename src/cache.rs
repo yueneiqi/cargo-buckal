@@ -1,23 +1,32 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::{Error, Result, anyhow};
-use cargo_metadata::{Node, PackageId, camino::Utf8PathBuf};
+use cargo_metadata::{PackageId, camino::Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::utils::{UnwrapOrExit, get_cache_path};
+
+use crate::resolve::BuckalResolve;
 
 // type Fingerprint = [u8; 32];
 
 /// CACHE_VERSION is incremented whenever the cache format or logic changes in a way that is not backward-compatible.
 ///
 /// Version 2: Added multi-platform support to the cache format.
+/// Version 3: Switched to BuckalNode-based fingerprinting (DAG refactor).
 ///
 /// Migration strategy: There is no automatic migration; if a cache version mismatch is detected, the old cache is ignored and a new cache is created.
 /// This ensures correctness at the cost of recomputation.
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Fingerprint([u8; 32]);
+
+impl Fingerprint {
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
 
 impl Serialize for Fingerprint {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -46,14 +55,6 @@ impl<'de> Deserialize<'de> for Fingerprint {
 
 pub trait BuckalHash {
     fn fingerprint(&self) -> Fingerprint;
-}
-
-impl BuckalHash for Node {
-    fn fingerprint(&self) -> Fingerprint {
-        let encoded = bincode::serde::encode_to_vec(self, bincode::config::standard())
-            .expect("Serialization failed");
-        Fingerprint(blake3::hash(&encoded).into())
-    }
 }
 
 pub trait PackageIdExt {
@@ -102,10 +103,15 @@ pub struct BuckalCache {
 }
 
 impl BuckalCache {
-    pub fn new(resolve: &HashMap<PackageId, Node>, workspace_root: &Utf8PathBuf) -> Self {
+    pub fn from_resolve(resolve: &BuckalResolve, workspace_root: &Utf8PathBuf) -> Self {
         let fingerprints = resolve
-            .iter()
-            .map(|(id, node)| (id.canonicalize(workspace_root), node.fingerprint()))
+            .nodes()
+            .map(|node| {
+                (
+                    node.package_id.canonicalize(workspace_root),
+                    node.fingerprint(),
+                )
+            })
             .collect();
         Self {
             fingerprints,

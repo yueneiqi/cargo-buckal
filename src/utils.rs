@@ -1,9 +1,7 @@
-use cargo_metadata::MetadataCommand;
 use cargo_metadata::camino::Utf8PathBuf;
 use cargo_platform::Cfg;
 use colored::Colorize;
 use inquire::Select;
-use std::collections::HashMap;
 use std::{io, process::Command, str::FromStr};
 
 use crate::RUST_CRATES_ROOT;
@@ -421,19 +419,9 @@ pub fn get_vendor_dir(name: &str, version: &str) -> io::Result<Utf8PathBuf> {
 
 pub fn get_last_cache() -> BuckalCache {
     // This function retrieves the last saved BuckalCache from the cache file.
-    // If the cache file does not exist, it returns a snapshot of the current state.
-    if let Ok(last_cache) = BuckalCache::load() {
-        last_cache
-    } else {
-        let cargo_metadata = MetadataCommand::new().exec().unwrap_or_exit();
-        let resolve = cargo_metadata.resolve.unwrap();
-        let nodes_map = resolve
-            .nodes
-            .into_iter()
-            .map(|n| (n.id.to_owned(), n))
-            .collect::<HashMap<_, _>>();
-        BuckalCache::new(&nodes_map, &cargo_metadata.workspace_root)
-    }
+    // If the cache file does not exist or version mismatches, return empty cache
+    // so all packages appear as "Added" (full regeneration).
+    BuckalCache::load().unwrap_or_else(|_| BuckalCache::new_empty())
 }
 
 pub fn section(title: &str) {

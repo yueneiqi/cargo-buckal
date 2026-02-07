@@ -11,6 +11,7 @@ use crate::{
     bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier},
     cache::BuckalCache,
     context::BuckalContext,
+    resolve::BuckalResolve,
     utils::{UnwrapOrExit, ensure_prerequisites, get_buck2_root},
 };
 
@@ -117,7 +118,10 @@ pub fn execute(args: &MigrateArgs) {
     } else {
         BuckalCache::load().unwrap_or_exit_ctx("failed to load existing cache")
     };
-    let new_cache = BuckalCache::new(&ctx.nodes_map, &ctx.workspace_root);
+    let new_cache = {
+        let resolve = BuckalResolve::from_context(&ctx);
+        BuckalCache::from_resolve(&resolve, &ctx.workspace_root)
+    };
     let changes = new_cache.diff(&last_cache, &ctx.workspace_root);
 
     // Apply changes to BUCK files
