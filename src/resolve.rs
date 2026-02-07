@@ -42,14 +42,22 @@ pub struct BuckalResolve {
 impl BuckalResolve {
     pub fn from_context(ctx: &BuckalContext) -> Self {
         let buck2_root = get_buck2_root().expect("failed to get buck2 root");
-        let buck2_root_path = PathBuf::from(buck2_root.as_str());
+        Self::from_metadata(&ctx.nodes_map, &ctx.packages_map, buck2_root.as_std_path())
+    }
 
+    /// Build a DAG from raw cargo metadata maps. `root_path` is used to compute
+    /// relative paths for first-party packages (typically the buck2 root or workspace root).
+    pub fn from_metadata(
+        nodes_map: &HashMap<PackageId, cargo_metadata::Node>,
+        packages_map: &HashMap<PackageId, cargo_metadata::Package>,
+        root_path: &std::path::Path,
+    ) -> Self {
         let mut dag = Dag::<BuckalNode, (), u32>::new();
         let mut index_map = HashMap::new();
 
         // Create nodes
-        for (pkg_id, node) in &ctx.nodes_map {
-            let package = ctx.packages_map.get(pkg_id).expect("package not found");
+        for (pkg_id, node) in nodes_map {
+            let package = packages_map.get(pkg_id).expect("package not found");
 
             let kind = if package.source.is_none() {
                 // First-party (workspace member)
@@ -58,7 +66,7 @@ impl BuckalResolve {
                     .parent()
                     .expect("manifest_path should have a parent");
                 let relative_path = manifest_dir
-                    .strip_prefix(&buck2_root_path)
+                    .strip_prefix(root_path)
                     .unwrap_or(manifest_dir)
                     .to_string_lossy()
                     .replace('\\', "/");
@@ -84,7 +92,7 @@ impl BuckalResolve {
         }
 
         // Create edges
-        for (pkg_id, node) in &ctx.nodes_map {
+        for (pkg_id, node) in nodes_map {
             if let Some(&parent_idx) = index_map.get(pkg_id) {
                 for dep in &node.deps {
                     if let Some(&child_idx) = index_map.get(&dep.pkg) {
@@ -258,5 +266,188 @@ mod tests {
 
         // Different version -> different fingerprint
         assert_ne!(node1.fingerprint(), node3.fingerprint());
+    }
+
+    /// Helper: build a BuckalResolve from cargo metadata at `manifest_dir`.
+    fn resolve_from_manifest(manifest_dir: &str) -> Option<BuckalResolve> {
+        use cargo_metadata::MetadataCommand;
+        let manifest_path = std::path::Path::new(manifest_dir).join("Cargo.toml");
+        if !manifest_path.exists() {
+            return None;
+        }
+        let metadata = MetadataCommand::new()
+            .manifest_path(&manifest_path)
+            .exec()
+            .ok()?;
+        let packages_map: HashMap<PackageId, cargo_metadata::Package> = metadata
+            .packages
+            .into_iter()
+            .map(|p| (p.id.clone(), p))
+            .collect();
+        let resolve = metadata.resolve?;
+        let nodes_map: HashMap<PackageId, cargo_metadata::Node> = resolve
+            .nodes
+            .into_iter()
+            .map(|n| (n.id.clone(), n))
+            .collect();
+        let root_path = std::path::Path::new(metadata.workspace_root.as_str());
+        Some(BuckalResolve::from_metadata(&nodes_map, &packages_map, root_path))
+    }
+
+    #[test]
+    fn test_first_party_demo_dag() {
+        let Some(resolve) = resolve_from_manifest("/tmp/buckal-test/first-party-demo") else {
+            eprintln!("skipping: first-party-demo not cloned at /tmp/buckal-test/first-party-demo");
+            return;
+        };
+
+        // Should contain the 3 first-party crates
+        assert!(resolve.find_by_name("demo-root", None).is_some(), "demo-root not found");
+        assert!(resolve.find_by_name("demo-lib", None).is_some(), "demo-lib not found");
+        assert!(resolve.find_by_name("demo-util", None).is_some(), "demo-util not found");
+
+        // All 3 first-party crates should be FirstParty
+        for name in &["demo-root", "demo-lib", "demo-util"] {
+            let node = resolve.find_by_name(name, None).unwrap();
+            assert!(
+                matches!(&node.kind, NodeKind::FirstParty { .. }),
+                "{} should be FirstParty, got {:?}",
+                name,
+                node.kind
+            );
+        }
+
+        // demo-root relative_path should be "" (it's at the workspace root)
+        let root_node = resolve.find_by_name("demo-root", None).unwrap();
+        match &root_node.kind {
+            NodeKind::FirstParty { relative_path } => {
+                assert_eq!(relative_path, "", "demo-root should have empty relative_path");
+            }
+            _ => panic!("expected FirstParty"),
+        }
+
+        // demo-lib relative path should be "crates/demo-lib"
+        let lib_node = resolve.find_by_name("demo-lib", None).unwrap();
+        match &lib_node.kind {
+            NodeKind::FirstParty { relative_path } => {
+                assert_eq!(relative_path, "crates/demo-lib");
+            }
+            _ => panic!("expected FirstParty"),
+        }
+
+        // demo-util relative path should be "crates/demo-util"
+        let util_node = resolve.find_by_name("demo-util", None).unwrap();
+        match &util_node.kind {
+            NodeKind::FirstParty { relative_path } => {
+                assert_eq!(relative_path, "crates/demo-util");
+            }
+            _ => panic!("expected FirstParty"),
+        }
+
+        // serde should be ThirdParty
+        let serde_node = resolve.find_by_name("serde", None).unwrap();
+        assert!(
+            matches!(&serde_node.kind, NodeKind::ThirdParty),
+            "serde should be ThirdParty"
+        );
+
+        // demo-lib depends on serde, so serde's dependents should include demo-lib
+        let serde_dependents = resolve.dependents(&serde_node.package_id);
+        let serde_dependent_names: Vec<&str> = serde_dependents.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            serde_dependent_names.contains(&"demo-lib"),
+            "serde dependents should include demo-lib, got {:?}",
+            serde_dependent_names
+        );
+
+        // demo-lib's dependencies should include demo-util and serde
+        let lib_deps = resolve.dependencies(&lib_node.package_id);
+        let lib_dep_names: Vec<&str> = lib_deps.iter().map(|n| n.name.as_str()).collect();
+        assert!(lib_dep_names.contains(&"demo-util"), "demo-lib should depend on demo-util, got {:?}", lib_dep_names);
+        assert!(lib_dep_names.contains(&"serde"), "demo-lib should depend on serde, got {:?}", lib_dep_names);
+
+        // Total node count should include all transitive deps
+        let total_nodes = resolve.nodes().count();
+        assert!(total_nodes >= 5, "expected at least 5 nodes (3 first-party + serde + serde_derive), got {}", total_nodes);
+
+        // Cache construction should work
+        let cache = crate::cache::BuckalCache::from_resolve(
+            &resolve,
+            &cargo_metadata::camino::Utf8PathBuf::from("/tmp/buckal-test/first-party-demo"),
+        );
+        // Verify cache has entries for all nodes
+        let cache_str = toml::to_string_pretty(&cache).unwrap();
+        assert!(cache_str.contains("fingerprints"), "cache should contain fingerprints section");
+    }
+
+    #[test]
+    fn test_monorepo_demo_dag() {
+        let Some(resolve) = resolve_from_manifest("/tmp/buckal-test/monorepo-demo/project") else {
+            eprintln!("skipping: monorepo-demo not cloned at /tmp/buckal-test/monorepo-demo");
+            return;
+        };
+
+        // Should contain the 2 workspace members (virtual workspace - no root package)
+        assert!(resolve.find_by_name("sub-lib", None).is_some(), "sub-lib not found");
+        assert!(resolve.find_by_name("sub-app", None).is_some(), "sub-app not found");
+
+        // Both should be FirstParty
+        let sub_lib = resolve.find_by_name("sub-lib", None).unwrap();
+        let sub_app = resolve.find_by_name("sub-app", None).unwrap();
+        assert!(matches!(&sub_lib.kind, NodeKind::FirstParty { .. }), "sub-lib should be FirstParty");
+        assert!(matches!(&sub_app.kind, NodeKind::FirstParty { .. }), "sub-app should be FirstParty");
+
+        // Verify relative paths
+        match &sub_lib.kind {
+            NodeKind::FirstParty { relative_path } => {
+                assert_eq!(relative_path, "sub-lib");
+            }
+            _ => panic!("expected FirstParty"),
+        }
+        match &sub_app.kind {
+            NodeKind::FirstParty { relative_path } => {
+                assert_eq!(relative_path, "sub-app");
+            }
+            _ => panic!("expected FirstParty"),
+        }
+
+        // sub-app depends on sub-lib
+        let app_deps = resolve.dependencies(&sub_app.package_id);
+        let app_dep_names: Vec<&str> = app_deps.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            app_dep_names.contains(&"sub-lib"),
+            "sub-app should depend on sub-lib, got {:?}",
+            app_dep_names
+        );
+
+        // sub-lib's dependents should include sub-app
+        let lib_dependents = resolve.dependents(&sub_lib.package_id);
+        let lib_dependent_names: Vec<&str> = lib_dependents.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            lib_dependent_names.contains(&"sub-app"),
+            "sub-lib dependents should include sub-app, got {:?}",
+            lib_dependent_names
+        );
+
+        // serde should be ThirdParty and present
+        let serde_node = resolve.find_by_name("serde", None).unwrap();
+        assert!(matches!(&serde_node.kind, NodeKind::ThirdParty));
+
+        // sub-lib depends on serde (workspace dep)
+        let lib_deps = resolve.dependencies(&sub_lib.package_id);
+        let lib_dep_names: Vec<&str> = lib_deps.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            lib_dep_names.contains(&"serde"),
+            "sub-lib should depend on serde, got {:?}",
+            lib_dep_names
+        );
+
+        // Cache construction should work
+        let cache = crate::cache::BuckalCache::from_resolve(
+            &resolve,
+            &cargo_metadata::camino::Utf8PathBuf::from("/tmp/buckal-test/monorepo-demo/project"),
+        );
+        let cache_str = toml::to_string_pretty(&cache).unwrap();
+        assert!(cache_str.contains("fingerprints"), "cache should contain fingerprints section");
     }
 }
