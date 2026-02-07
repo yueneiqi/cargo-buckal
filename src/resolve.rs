@@ -269,37 +269,33 @@ mod tests {
     }
 
     /// Helper: build a BuckalResolve from cargo metadata at `manifest_dir`.
-    fn resolve_from_manifest(manifest_dir: &str) -> Option<BuckalResolve> {
+    #[cfg(feature = "integration-tests")]
+    fn resolve_from_manifest(manifest_dir: &str) -> BuckalResolve {
         use cargo_metadata::MetadataCommand;
         let manifest_path = std::path::Path::new(manifest_dir).join("Cargo.toml");
-        if !manifest_path.exists() {
-            return None;
-        }
         let metadata = MetadataCommand::new()
             .manifest_path(&manifest_path)
             .exec()
-            .ok()?;
+            .expect("cargo metadata failed");
         let packages_map: HashMap<PackageId, cargo_metadata::Package> = metadata
             .packages
             .into_iter()
             .map(|p| (p.id.clone(), p))
             .collect();
-        let resolve = metadata.resolve?;
+        let resolve = metadata.resolve.expect("no resolve in metadata");
         let nodes_map: HashMap<PackageId, cargo_metadata::Node> = resolve
             .nodes
             .into_iter()
             .map(|n| (n.id.clone(), n))
             .collect();
         let root_path = std::path::Path::new(metadata.workspace_root.as_str());
-        Some(BuckalResolve::from_metadata(&nodes_map, &packages_map, root_path))
+        BuckalResolve::from_metadata(&nodes_map, &packages_map, root_path)
     }
 
     #[test]
+    #[cfg(feature = "integration-tests")]
     fn test_first_party_demo_dag() {
-        let Some(resolve) = resolve_from_manifest("/tmp/buckal-test/first-party-demo") else {
-            eprintln!("skipping: first-party-demo not cloned at /tmp/buckal-test/first-party-demo");
-            return;
-        };
+        let resolve = resolve_from_manifest("/tmp/buckal-test/first-party-demo");
 
         // Should contain the 3 first-party crates
         assert!(resolve.find_by_name("demo-root", None).is_some(), "demo-root not found");
@@ -381,11 +377,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "integration-tests")]
     fn test_monorepo_demo_dag() {
-        let Some(resolve) = resolve_from_manifest("/tmp/buckal-test/monorepo-demo/project") else {
-            eprintln!("skipping: monorepo-demo not cloned at /tmp/buckal-test/monorepo-demo");
-            return;
-        };
+        let resolve = resolve_from_manifest("/tmp/buckal-test/monorepo-demo/project");
 
         // Should contain the 2 workspace members (virtual workspace - no root package)
         assert!(resolve.find_by_name("sub-lib", None).is_some(), "sub-lib not found");
@@ -452,11 +446,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "integration-tests")]
     fn test_fd_find_dag() {
-        let Some(resolve) = resolve_from_manifest("/tmp/buckal-test/fd") else {
-            eprintln!("skipping: fd not cloned at /tmp/buckal-test/fd");
-            return;
-        };
+        let resolve = resolve_from_manifest("/tmp/buckal-test/fd");
 
         // fd-find is the only first-party package
         let fd = resolve.find_by_name("fd-find", None).unwrap();
