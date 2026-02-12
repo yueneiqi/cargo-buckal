@@ -4,6 +4,7 @@ use cargo_platform::Cfg;
 use colored::Colorize;
 use inquire::Select;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::{io, process::Command, str::FromStr};
 
 use crate::RUST_CRATES_ROOT;
@@ -323,6 +324,13 @@ pub fn get_buck2_root() -> io::Result<Utf8PathBuf> {
     }
 }
 
+pub fn find_buck2_project_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|candidate| candidate.join(".buckconfig").is_file())
+        .map(Path::to_path_buf)
+}
+
 /// Check if a platform target exists using buck2 uquery
 pub fn platform_exists(platform_target: &str) -> bool {
     let output = crate::buck2::Buck2Command::uquery()
@@ -531,6 +539,22 @@ impl<T, E: std::fmt::Display> UnwrapOrExit<T> for Result<T, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir() -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        path.push(format!(
+            "cargo-buckal-utils-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        path
+    }
 
     #[test]
     fn test_is_valid_rustc_target_valid_targets() {
@@ -569,5 +593,31 @@ mod tests {
         if let Ok(platform) = result {
             assert_eq!(platform, "//platforms:x86_64-unknown-linux-gnu");
         }
+    }
+
+    #[test]
+    fn test_find_buck2_project_root_finds_ancestor_buckconfig() {
+        let root = unique_temp_dir();
+        let nested = root.join("crates").join("demo");
+        std::fs::create_dir_all(&nested).expect("failed to create nested directories");
+        std::fs::write(root.join(".buckconfig"), "[project]\nignore=.git\n")
+            .expect("failed to write .buckconfig");
+
+        let found = find_buck2_project_root(&nested);
+        assert_eq!(found.as_deref(), Some(root.as_path()));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_find_buck2_project_root_returns_none_without_buckconfig() {
+        let root = unique_temp_dir();
+        let nested = root.join("crates").join("demo");
+        std::fs::create_dir_all(&nested).expect("failed to create nested directories");
+
+        let found = find_buck2_project_root(&nested);
+        assert!(found.is_none());
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

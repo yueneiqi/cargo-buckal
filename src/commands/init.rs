@@ -1,6 +1,7 @@
 use std::{
     fs::OpenOptions,
     io::Write,
+    path::Path,
     process::{Command, Stdio, exit},
 };
 
@@ -12,7 +13,7 @@ use crate::{
     buck2::Buck2Command,
     buckal_error, buckal_log, buckal_note,
     bundles::{init_buckal_cell, init_modifier},
-    utils::{UnwrapOrExit, ensure_prerequisites},
+    utils::{UnwrapOrExit, ensure_prerequisites, find_buck2_project_root},
 };
 
 #[derive(Parser, Debug)]
@@ -40,6 +41,10 @@ pub struct InitArgs {
 pub fn execute(args: &InitArgs) {
     // Ensure all prerequisites are installed before proceeding
     ensure_prerequisites().unwrap_or_exit();
+
+    if !args.repo && !args.lite {
+        ensure_current_dir_in_buck2_project().unwrap_or_exit();
+    }
 
     // Use `cargo new` to initialize the directory
     let mut cargo_cmd = Command::new("cargo");
@@ -111,5 +116,68 @@ pub fn execute(args: &InitArgs) {
         buckal_note!(
             "You should manually configure a Cargo workspace before running `cargo buckal new <path>` to create packages."
         );
+    }
+}
+
+fn ensure_current_dir_in_buck2_project() -> std::io::Result<()> {
+    let cwd = std::env::current_dir()?;
+    ensure_dir_in_buck2_project(&cwd)
+}
+
+fn ensure_dir_in_buck2_project(path: &Path) -> std::io::Result<()> {
+    if find_buck2_project_root(path).is_some() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "No Buck2 project root (.buckconfig) found in the current directory. \
+Run `cargo buckal init --repo` (or `--lite`) first.",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_dir_in_buck2_project;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir() -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        path.push(format!(
+            "cargo-buckal-init-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        path
+    }
+
+    #[test]
+    fn test_ensure_dir_in_buck2_project_accepts_buckconfig_ancestor() {
+        let root = unique_temp_dir();
+        let nested = root.join("pkg");
+        std::fs::create_dir_all(&nested).expect("failed to create nested dir");
+        std::fs::write(root.join(".buckconfig"), "[project]\nignore=.git\n")
+            .expect("failed to write .buckconfig");
+
+        let result = ensure_dir_in_buck2_project(&nested);
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_ensure_dir_in_buck2_project_rejects_missing_buckconfig() {
+        let root = unique_temp_dir();
+        let nested = root.join("pkg");
+        std::fs::create_dir_all(&nested).expect("failed to create nested dir");
+
+        let result = ensure_dir_in_buck2_project(&nested);
+        assert!(result.is_err());
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }
