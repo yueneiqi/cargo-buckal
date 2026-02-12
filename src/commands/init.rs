@@ -133,46 +133,27 @@ Run `cargo buckal init --repo` (or `--lite`) first.",
 #[cfg(test)]
 mod tests {
     use super::ensure_dir_in_buck2_project;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn unique_temp_dir() -> PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        path.push(format!(
-            "cargo-buckal-init-{}-{}",
-            std::process::id(),
-            nanos
-        ));
-        path
-    }
+    use tempfile::TempDir;
 
     #[test]
     fn test_ensure_dir_in_buck2_project_accepts_buckconfig_ancestor() {
-        let root = unique_temp_dir();
-        let nested = root.join("pkg");
+        let root = TempDir::new().expect("failed to create temp dir");
+        let nested = root.path().join("pkg");
         std::fs::create_dir_all(&nested).expect("failed to create nested dir");
-        std::fs::write(root.join(".buckconfig"), "[project]\nignore=.git\n")
+        std::fs::write(root.path().join(".buckconfig"), "[project]\nignore=.git\n")
             .expect("failed to write .buckconfig");
 
         let result = ensure_dir_in_buck2_project(&nested);
         assert!(result.is_ok());
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn test_ensure_dir_in_buck2_project_rejects_missing_buckconfig() {
-        let root = unique_temp_dir();
-        let nested = root.join("pkg");
+        let root = TempDir::new().expect("failed to create temp dir");
+        let nested = root.path().join("pkg");
         std::fs::create_dir_all(&nested).expect("failed to create nested dir");
 
         let result = ensure_dir_in_buck2_project(&nested);
         assert!(result.is_err());
-
-        std::fs::remove_dir_all(&root).ok();
     }
 }

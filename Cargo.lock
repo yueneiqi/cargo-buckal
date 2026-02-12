@@ -290,6 +290,7 @@ dependencies = [
  "serde_starlark",
  "sha1",
  "starlark_syntax",
+ "tempfile",
  "toml",
  "toml_edit",
  "walkdir",

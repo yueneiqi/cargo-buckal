@@ -550,22 +550,7 @@ impl<T, E: std::fmt::Display> UnwrapOrExit<T> for Result<T, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn unique_temp_dir() -> PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        path.push(format!(
-            "cargo-buckal-utils-{}-{}",
-            std::process::id(),
-            nanos
-        ));
-        path
-    }
+    use tempfile::TempDir;
 
     #[test]
     fn test_is_valid_rustc_target_valid_targets() {
@@ -608,41 +593,34 @@ mod tests {
 
     #[test]
     fn test_find_buck2_project_root_finds_ancestor_buckconfig() {
-        let root = unique_temp_dir();
-        let nested = root.join("crates").join("demo");
+        let root = TempDir::new().expect("failed to create temp dir");
+        let nested = root.path().join("crates").join("demo");
         std::fs::create_dir_all(&nested).expect("failed to create nested directories");
-        std::fs::write(root.join(".buckconfig"), "[project]\nignore=.git\n")
+        std::fs::write(root.path().join(".buckconfig"), "[project]\nignore=.git\n")
             .expect("failed to write .buckconfig");
 
         let found = find_buck2_project_root(&nested);
-        assert_eq!(found.as_deref(), Some(root.as_path()));
-
-        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(found.as_deref(), Some(root.path()));
     }
 
     #[test]
     fn test_find_buck2_project_root_returns_none_without_buckconfig() {
-        let root = unique_temp_dir();
-        let nested = root.join("crates").join("demo");
+        let root = TempDir::new().expect("failed to create temp dir");
+        let nested = root.path().join("crates").join("demo");
         std::fs::create_dir_all(&nested).expect("failed to create nested directories");
 
         let found = find_buck2_project_root(&nested);
         assert!(found.is_none());
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn test_append_buck_out_to_gitignore_creates_file_when_missing() {
-        let root = unique_temp_dir();
-        std::fs::create_dir_all(&root).expect("failed to create root dir");
+        let root = TempDir::new().expect("failed to create temp dir");
 
-        append_buck_out_to_gitignore(&root).expect("expected .gitignore to be created");
+        append_buck_out_to_gitignore(root.path()).expect("expected .gitignore to be created");
 
-        let gitignore =
-            std::fs::read_to_string(root.join(".gitignore")).expect("failed to read .gitignore");
+        let gitignore = std::fs::read_to_string(root.path().join(".gitignore"))
+            .expect("failed to read .gitignore");
         assert!(gitignore.contains("/buck-out"));
-
-        std::fs::remove_dir_all(&root).ok();
     }
 }

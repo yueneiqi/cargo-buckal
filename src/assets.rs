@@ -64,36 +64,29 @@ fn extract_dir(dest: &Path, dir: &Dir) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::extract_buck2_assets;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn unique_temp_dir() -> std::path::PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        path.push(format!(
-            "cargo-buckal-assets-{}-{}",
-            std::process::id(),
-            nanos
-        ));
-        path
-    }
+    use tempfile::TempDir;
 
     #[test]
     fn extract_buck2_assets_creates_expected_files() {
-        let dest = unique_temp_dir();
-        std::fs::create_dir_all(&dest).expect("failed to create temp dir");
+        let dest = TempDir::new().expect("failed to create temp dir");
 
-        extract_buck2_assets(&dest).expect("failed to extract assets");
+        extract_buck2_assets(dest.path()).expect("failed to extract assets");
 
-        assert!(dest.join("toolchains").is_dir());
-        assert!(dest.join("platforms").is_dir());
+        assert!(dest.path().join("toolchains").is_dir());
+        assert!(dest.path().join("platforms").is_dir());
 
-        let toolchains_buck = dest.join("toolchains").join("BUCK");
-        let platforms_buck = dest.join("platforms").join("BUCK");
-        let demo_cxx = dest.join("toolchains").join("cxx").join("demo_cxx.bzl");
-        let demo_rust = dest.join("toolchains").join("rust").join("demo_rust.bzl");
+        let toolchains_buck = dest.path().join("toolchains").join("BUCK");
+        let platforms_buck = dest.path().join("platforms").join("BUCK");
+        let demo_cxx = dest
+            .path()
+            .join("toolchains")
+            .join("cxx")
+            .join("demo_cxx.bzl");
+        let demo_rust = dest
+            .path()
+            .join("toolchains")
+            .join("rust")
+            .join("demo_rust.bzl");
 
         assert!(toolchains_buck.is_file());
         assert!(platforms_buck.is_file());
@@ -107,7 +100,5 @@ mod tests {
         let platforms_contents =
             std::fs::read_to_string(&platforms_buck).expect("read platforms BUCK");
         assert!(!platforms_contents.trim().is_empty());
-
-        std::fs::remove_dir_all(&dest).ok();
     }
 }

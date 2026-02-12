@@ -154,42 +154,26 @@ fn absolutize_path(path: &str, cwd: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::ensure_new_path_within_buck2_project;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn unique_temp_dir() -> PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        path.push(format!("cargo-buckal-new-{}-{}", std::process::id(), nanos));
-        path
-    }
+    use tempfile::TempDir;
 
     #[test]
     fn test_ensure_new_path_within_buck2_project_accepts_buckconfig_ancestor() {
-        let root = unique_temp_dir();
-        let package = root.join("crates").join("demo");
-        std::fs::create_dir_all(&root).expect("failed to create root dir");
-        std::fs::write(root.join(".buckconfig"), "[project]\nignore=.git\n")
+        let root = TempDir::new().expect("failed to create temp dir");
+        let package = root.path().join("crates").join("demo");
+        std::fs::write(root.path().join(".buckconfig"), "[project]\nignore=.git\n")
             .expect("failed to write .buckconfig");
 
         let result = ensure_new_path_within_buck2_project(package.to_str().unwrap());
         assert!(result.is_ok());
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn test_ensure_new_path_within_buck2_project_rejects_missing_buckconfig() {
-        let root = unique_temp_dir();
-        let package = root.join("crates").join("demo");
-        std::fs::create_dir_all(root.join("crates")).expect("failed to create parent dir");
+        let root = TempDir::new().expect("failed to create temp dir");
+        let package = root.path().join("crates").join("demo");
+        std::fs::create_dir_all(root.path().join("crates")).expect("failed to create parent dir");
 
         let result = ensure_new_path_within_buck2_project(package.to_str().unwrap());
         assert!(result.is_err());
-
-        std::fs::remove_dir_all(&root).ok();
     }
 }
