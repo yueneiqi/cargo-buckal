@@ -73,6 +73,32 @@ buck2_binary = "/path/to/your/buck2"
 
 If no configuration file exists, cargo-buckal will use `buck2` (searches your PATH).
 
+## Troubleshooting
+
+### Linux: `libpython*.so` not found when running `cargo buckal`
+
+If you see an error like:
+
+```text
+$HOME/.cargo/bin/cargo-buckal: error while loading shared libraries: libpython3.13.so.1.0: cannot open shared object file: No such file or directory
+```
+
+`cargo-buckal` may have been built against a different Python shared library version than the one currently installed. This happens because PyO3 links to a specific Python version at compile time.
+
+To fix it, reinstall with `PYO3_PYTHON` set to an available Python executable:
+
+```bash
+python3 --version
+ls /usr/lib/libpython3*
+PYO3_PYTHON=python3.12 cargo install --force --git https://github.com/buck2hub/cargo-buckal.git
+```
+
+If you install from crates.io instead of Git, use:
+
+```bash
+PYO3_PYTHON=python3.12 cargo install --force cargo-buckal
+```
+
 ## Pre-commit Hooks
 
 This project uses [prek](https://github.com/j178/prek) for pre-commit hooks (configured in `.pre-commit-config.yaml`).
