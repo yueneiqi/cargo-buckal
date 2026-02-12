@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, io::Write, path::PathBuf};
+use std::path::PathBuf;
 
 use clap::Parser;
 
@@ -11,7 +11,7 @@ use crate::{
     bundles::{fetch_buckal_cell, init_buckal_cell, init_modifier},
     cache::BuckalCache,
     context::BuckalContext,
-    utils::{UnwrapOrExit, ensure_prerequisites, get_buck2_root},
+    utils::{UnwrapOrExit, append_buck_out_to_gitignore, ensure_prerequisites, get_buck2_root},
 };
 
 #[derive(Parser, Debug)]
@@ -82,12 +82,8 @@ pub fn execute(args: &MigrateArgs) {
             "failed to create third-party rust crates directory at `{}`",
             crates_dir
         ));
-        let mut git_ignore = OpenOptions::new()
-            .create(false)
-            .append(true)
-            .open(buck2_root.join(".gitignore"))
-            .unwrap_or_exit();
-        writeln!(git_ignore, "/buck-out").unwrap_or_exit();
+        append_buck_out_to_gitignore(buck2_root.as_std_path())
+            .unwrap_or_exit_ctx("failed to update `.gitignore`");
 
         // Configure the buckal cell in .buckconfig
         init_buckal_cell(buck2_root.as_std_path()).unwrap_or_exit();

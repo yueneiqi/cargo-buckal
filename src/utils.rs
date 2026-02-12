@@ -4,6 +4,8 @@ use cargo_platform::Cfg;
 use colored::Colorize;
 use inquire::Select;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{io, process::Command, str::FromStr};
 
@@ -509,6 +511,15 @@ pub fn ensure_prerequisites() -> io::Result<()> {
     Ok(())
 }
 
+pub fn append_buck_out_to_gitignore(root: &Path) -> io::Result<()> {
+    let mut git_ignore = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join(".gitignore"))?;
+    writeln!(git_ignore, "/buck-out")?;
+    Ok(())
+}
+
 pub trait UnwrapOrExit<T> {
     fn unwrap_or_exit(self) -> T;
     fn unwrap_or_exit_ctx(self, context: impl std::fmt::Display) -> T;
@@ -617,6 +628,20 @@ mod tests {
 
         let found = find_buck2_project_root(&nested);
         assert!(found.is_none());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_append_buck_out_to_gitignore_creates_file_when_missing() {
+        let root = unique_temp_dir();
+        std::fs::create_dir_all(&root).expect("failed to create root dir");
+
+        append_buck_out_to_gitignore(&root).expect("expected .gitignore to be created");
+
+        let gitignore =
+            std::fs::read_to_string(root.join(".gitignore")).expect("failed to read .gitignore");
+        assert!(gitignore.contains("/buck-out"));
 
         std::fs::remove_dir_all(&root).ok();
     }

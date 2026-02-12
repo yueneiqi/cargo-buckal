@@ -1,6 +1,4 @@
 use std::{
-    fs::OpenOptions,
-    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio, exit},
 };
@@ -13,7 +11,9 @@ use crate::{
     buck2::Buck2Command,
     buckal_error, buckal_log, buckal_note,
     bundles::{init_buckal_cell, init_modifier},
-    utils::{UnwrapOrExit, ensure_prerequisites, find_buck2_project_root},
+    utils::{
+        UnwrapOrExit, append_buck_out_to_gitignore, ensure_prerequisites, find_buck2_project_root,
+    },
 };
 
 #[derive(Parser, Debug)]
@@ -96,12 +96,8 @@ pub fn execute(args: &NewArgs) {
             .unwrap_or_exit();
         std::fs::create_dir_all(format!("{}/{}", args.path, RUST_CRATES_ROOT))
             .unwrap_or_exit_ctx("failed to create third-party directory");
-        let mut git_ignore = OpenOptions::new()
-            .create(false)
-            .append(true)
-            .open(format!("{}/.gitignore", args.path))
-            .unwrap_or_exit();
-        writeln!(git_ignore, "/buck-out").unwrap_or_exit();
+        append_buck_out_to_gitignore(Path::new(&args.path))
+            .unwrap_or_exit_ctx("failed to update `.gitignore`");
 
         // Configure the buckal cell in .buckconfig
         let cwd = std::env::current_dir().unwrap_or_exit();
