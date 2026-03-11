@@ -19,6 +19,12 @@ const CACHE_VERSION: u32 = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Fingerprint([u8; 32]);
 
+impl Fingerprint {
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
 impl Serialize for Fingerprint {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
