@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 
-use cargo_metadata::{MetadataCommand, Node, Package, PackageId, camino::Utf8PathBuf};
+use cargo_metadata::{MetadataCommand, PackageId, camino::Utf8PathBuf};
 use cargo_util_schemas::lockfile::TomlLockfile;
 
-use crate::{config::RepoConfig, utils::UnwrapOrExit};
+use crate::{
+    config::RepoConfig,
+    resolve::BuckalResolve,
+    utils::{UnwrapOrExit, get_buck2_root},
+};
 
 pub struct BuckalContext {
-    /// The root package of the workspace, if any
-    pub root: Option<Package>,
-    pub nodes_map: HashMap<PackageId, Node>,
-    pub packages_map: HashMap<PackageId, Package>,
-    pub checksums_map: HashMap<String, String>,
+    /// The root package id, if any (None for virtual workspaces)
+    pub root: Option<PackageId>,
+    pub resolve: BuckalResolve,
     pub workspace_root: Utf8PathBuf,
     /// Whether to skip merging manual changes in BUCK files
     pub no_merge: bool,
@@ -28,15 +30,15 @@ impl BuckalContext {
         } else {
             MetadataCommand::new().exec().unwrap()
         };
-        let root = cargo_metadata.root_package().map(|p| p.to_owned());
+        let root = cargo_metadata.root_package().map(|p| p.id.clone());
         let packages_map = cargo_metadata
             .packages
             .clone()
             .into_iter()
             .map(|p| (p.id.to_owned(), p))
             .collect::<HashMap<_, _>>();
-        let resolve = cargo_metadata.resolve.unwrap();
-        let nodes_map = resolve
+        let resolve_meta = cargo_metadata.resolve.unwrap();
+        let nodes_map = resolve_meta
             .nodes
             .into_iter()
             .map(|n| (n.id.to_owned(), n))
@@ -57,11 +59,17 @@ impl BuckalContext {
             .collect::<HashMap<_, _>>();
         let repo_config = RepoConfig::load();
 
+        let buck2_root = get_buck2_root().unwrap_or_exit_ctx("failed to get Buck2 project root");
+        let resolve = BuckalResolve::from_metadata(
+            &nodes_map,
+            &packages_map,
+            &checksums_map,
+            buck2_root.as_std_path(),
+        );
+
         Self {
             root,
-            nodes_map,
-            packages_map,
-            checksums_map,
+            resolve,
             workspace_root: cargo_metadata.workspace_root.clone(),
             no_merge: false,
             repo_config,
