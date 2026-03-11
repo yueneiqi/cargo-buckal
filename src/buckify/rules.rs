@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet as Set, vec};
 
-use cargo_metadata::{Node, Package, camino::Utf8PathBuf};
+use cargo_metadata::camino::Utf8PathBuf;
 use cargo_util_schemas::core::{PackageIdSpec, SourceKind};
 use itertools::Itertools;
 
@@ -8,6 +8,7 @@ use crate::{
     buck::{Load, Rule, RustRule},
     buckal_error, buckal_note,
     context::BuckalContext,
+    resolve::BuckalNode,
     utils::{UnwrapOrExit, get_vendor_dir},
 };
 
@@ -20,33 +21,33 @@ use super::emit::{
 /// Buckifies a third-party dependency into a list of BUCK rules.
 ///
 /// This includes generating rules for the library target, and if a build script is present, also generating rules for the build script and patching the library rule accordingly.
-pub fn buckify_dep_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
-    let package = ctx.packages_map.get(&node.id).unwrap().to_owned();
-
+pub fn buckify_dep_node(node: &BuckalNode, ctx: &BuckalContext) -> Vec<Rule> {
     // emit buck rules for lib target
     let mut buck_rules: Vec<Rule> = Vec::new();
 
-    let manifest_dir = package.manifest_path.parent().unwrap().to_owned();
-    let lib_target = package
+    let manifest_dir = node.manifest_path.parent().unwrap().to_owned();
+    let lib_target = node
         .targets
         .iter()
         .find(|t| {
-            t.kind.contains(&cargo_metadata::TargetKind::Lib)
-                || t.kind.contains(&cargo_metadata::TargetKind::CDyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::DyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::RLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::StaticLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::ProcMacro)
+            t.kind.iter().any(|k| {
+                k == "lib"
+                    || k == "cdylib"
+                    || k == "dylib"
+                    || k == "rlib"
+                    || k == "staticlib"
+                    || k == "proc-macro"
+            })
         })
         .expect("No library target found");
 
     // Generate rules to vendor the dependency source code
-    let package_id_spec =
-        PackageIdSpec::parse(&package.id.repr).unwrap_or_exit_ctx("failed to parse package ID");
+    let package_id_spec = PackageIdSpec::parse(&node.package_id.repr)
+        .unwrap_or_exit_ctx("failed to parse package ID");
 
     match package_id_spec.kind().unwrap() {
         SourceKind::Registry => {
-            let http_archive = emit_http_archive(&package, ctx);
+            let http_archive = emit_http_archive(node);
             buck_rules.push(Rule::HttpArchive(http_archive));
         }
         SourceKind::Path => {
@@ -56,16 +57,16 @@ pub fn buckify_dep_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
             );
             buckal_note!(
                 "Please consider importing `{}` with registry or git source instead, or if it's a local package, move it to the workspace and it will be treated as a root package.",
-                package.name
+                node.name
             );
             std::process::exit(1);
         }
         SourceKind::Git(_) => {
-            let git_fetch = emit_git_fetch(&package);
+            let git_fetch = emit_git_fetch(node);
             buck_rules.push(Rule::GitFetch(git_fetch));
         }
         _ => {
-            buckal_error!("Unsupported source type for package `{}`.", package.name);
+            buckal_error!("Unsupported source type for package `{}`.", node.name);
             buckal_note!("Only registry and git sources are supported for third-party packages.");
             std::process::exit(1);
         }
@@ -74,22 +75,15 @@ pub fn buckify_dep_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
     let cargo_manifest = emit_cargo_manifest();
     buck_rules.push(Rule::CargoManifest(cargo_manifest));
 
-    let rust_library = emit_rust_library(
-        &package,
-        node,
-        lib_target,
-        &manifest_dir,
-        &package.name,
-        ctx,
-    );
+    let rust_library = emit_rust_library(node, lib_target, &manifest_dir, &node.name, ctx);
 
     buck_rules.push(Rule::RustLibrary(rust_library));
 
     // Check if the package has a build script
-    let custom_build_target = package
+    let custom_build_target = node
         .targets
         .iter()
-        .find(|t| t.kind.contains(&cargo_metadata::TargetKind::CustomBuild));
+        .find(|t| t.kind.iter().any(|k| k == "custom-build"));
 
     if let Some(build_target) = custom_build_target {
         // Patch the rust_library rule to support build scripts
@@ -100,12 +94,11 @@ pub fn buckify_dep_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
         }
 
         // create the build script rule
-        let buildscript_build =
-            emit_buildscript_build(build_target, &package, node, &manifest_dir, ctx);
+        let buildscript_build = emit_buildscript_build(build_target, node, &manifest_dir, ctx);
         buck_rules.push(Rule::RustBinary(buildscript_build));
 
         // create the build script run rule
-        let buildscript_run = emit_buildscript_run(&package, node, build_target, ctx);
+        let buildscript_run = emit_buildscript_run(node, build_target, ctx);
         buck_rules.push(Rule::BuildscriptRun(buildscript_run));
     }
 
@@ -113,37 +106,37 @@ pub fn buckify_dep_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
 }
 
 /// Buckifies workspace package into a list of BUCK rules, including rules for all targets (bin, lib, test) and handling build scripts if present.
-pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
-    let package = ctx.packages_map.get(&node.id).unwrap().to_owned();
-
-    let bin_targets = package
+pub fn buckify_root_node(node: &BuckalNode, ctx: &BuckalContext) -> Vec<Rule> {
+    let bin_targets: Vec<_> = node
         .targets
         .iter()
-        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Bin))
-        .collect::<Vec<_>>();
+        .filter(|t| t.kind.iter().any(|k| k == "bin"))
+        .collect();
 
-    let lib_targets = package
+    let lib_targets: Vec<_> = node
         .targets
         .iter()
         .filter(|t| {
-            t.kind.contains(&cargo_metadata::TargetKind::Lib)
-                || t.kind.contains(&cargo_metadata::TargetKind::CDyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::DyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::RLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::StaticLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::ProcMacro)
+            t.kind.iter().any(|k| {
+                k == "lib"
+                    || k == "cdylib"
+                    || k == "dylib"
+                    || k == "rlib"
+                    || k == "staticlib"
+                    || k == "proc-macro"
+            })
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    let test_targets = package
+    let test_targets: Vec<_> = node
         .targets
         .iter()
-        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Test))
-        .collect::<Vec<_>>();
+        .filter(|t| t.kind.iter().any(|k| k == "test"))
+        .collect();
 
     let mut buck_rules: Vec<Rule> = Vec::new();
 
-    let manifest_dir = package.manifest_path.parent().unwrap().to_owned();
+    let manifest_dir = node.manifest_path.parent().unwrap().to_owned();
 
     // emit filegroup rule for vendor
     let filegroup = emit_filegroup();
@@ -156,8 +149,7 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
     for bin_target in &bin_targets {
         let buckal_name = bin_target.name.to_owned();
 
-        let mut rust_binary =
-            emit_rust_binary(&package, node, bin_target, &manifest_dir, &buckal_name, ctx);
+        let mut rust_binary = emit_rust_binary(node, bin_target, &manifest_dir, &buckal_name, ctx);
 
         if lib_targets.iter().any(|l| l.name == bin_target.name) {
             // Cargo allows `main.rs` to use items from `lib.rs` via the crate's own name by default.
@@ -177,15 +169,13 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
             lib_target.name.to_owned()
         };
 
-        let rust_library =
-            emit_rust_library(&package, node, lib_target, &manifest_dir, &buckal_name, ctx);
+        let rust_library = emit_rust_library(node, lib_target, &manifest_dir, &buckal_name, ctx);
 
         buck_rules.push(Rule::RustLibrary(rust_library));
 
         if !ctx.repo_config.ignore_tests && lib_target.test {
             // If the library target has inline tests, emit a rust_test rule for it
-            let rust_test =
-                emit_rust_test(&package, node, lib_target, &manifest_dir, "unittest", ctx);
+            let rust_test = emit_rust_test(node, lib_target, &manifest_dir, "unittest", ctx);
 
             buck_rules.push(Rule::RustTest(rust_test));
         }
@@ -196,16 +186,9 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
         for test_target in &test_targets {
             let buckal_name = test_target.name.to_owned();
 
-            let mut rust_test = emit_rust_test(
-                &package,
-                node,
-                test_target,
-                &manifest_dir,
-                &buckal_name,
-                ctx,
-            );
+            let mut rust_test = emit_rust_test(node, test_target, &manifest_dir, &buckal_name, ctx);
 
-            let package_name = package.name.replace("-", "_");
+            let package_name = node.name.replace("-", "_");
             let mut lib_alias = false;
             if bin_targets.iter().any(|b| b.name == package_name) {
                 lib_alias = true;
@@ -229,10 +212,10 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
     }
 
     // Check if the package has a build script
-    let custom_build_target = package
+    let custom_build_target = node
         .targets
         .iter()
-        .find(|t| t.kind.contains(&cargo_metadata::TargetKind::CustomBuild));
+        .find(|t| t.kind.iter().any(|k| k == "custom-build"));
 
     if let Some(build_target) = custom_build_target {
         // Patch the rust_library and rust_binary rules to support build scripts
@@ -243,12 +226,11 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
         }
 
         // create the build script rule
-        let buildscript_build =
-            emit_buildscript_build(build_target, &package, node, &manifest_dir, ctx);
+        let buildscript_build = emit_buildscript_build(build_target, node, &manifest_dir, ctx);
         buck_rules.push(Rule::RustBinary(buildscript_build));
 
         // create the build script run rule
-        let buildscript_run = emit_buildscript_run(&package, node, build_target, ctx);
+        let buildscript_run = emit_buildscript_run(node, build_target, ctx);
         buck_rules.push(Rule::BuildscriptRun(buildscript_run));
     }
 
@@ -256,9 +238,9 @@ pub fn buckify_root_node(node: &Node, ctx: &BuckalContext) -> Vec<Rule> {
 }
 
 /// Vendors the package sources to `third-party` and returns the path.
-pub fn vendor_package(package: &Package) -> Utf8PathBuf {
+pub fn vendor_package(node: &BuckalNode) -> Utf8PathBuf {
     let vendor_dir =
-        get_vendor_dir(&package.id).unwrap_or_exit_ctx("failed to get vendor directory");
+        get_vendor_dir(&node.package_id).unwrap_or_exit_ctx("failed to get vendor directory");
     if !vendor_dir.exists() {
         std::fs::create_dir_all(&vendor_dir).expect("Failed to create target directory");
     }
@@ -341,79 +323,63 @@ pub fn gen_buck_content(rules: &[Rule]) -> String {
 mod tests {
     use super::*;
     use crate::config::RepoConfig;
-    use cargo_metadata::{TargetKind, camino::Utf8PathBuf};
+    use crate::resolve::{BuckalNode, BuckalResolve, BuckalTarget, NodeKind};
+    use cargo_metadata::{PackageId, camino::Utf8PathBuf};
+    use daggy::Dag;
     use std::collections::HashMap;
 
-    fn mock_target(name: &str, kind: TargetKind) -> cargo_metadata::Target {
-        serde_json::from_value(serde_json::json!({
-            "name": name,
-            "kind": [kind],
-            "crate_types": [],
-            "required_features": [],
-            "src_path": "/tmp/dummy.rs",
-            "edition": "2021",
-            "doctest": true,
-            "test": true
-        }))
-        .unwrap()
+    fn mock_target(name: &str, kind: &str) -> BuckalTarget {
+        BuckalTarget {
+            name: name.to_string(),
+            kind: vec![kind.to_string()],
+            src_path: Utf8PathBuf::from("/tmp/dummy.rs"),
+            doctest: true,
+            test: true,
+        }
     }
 
-    fn mock_package(name: &str, targets: Vec<cargo_metadata::Target>) -> Package {
-        serde_json::from_value(serde_json::json!({
-            "name": name,
-            "version": "0.1.0",
-            "id": format!("{} 0.1.0 (registry+...)", name),
-            "license": null,
-            "license_file": null,
-            "description": null,
-            "source": null,
-            "dependencies": [],
-            "targets": targets,
-            "features": {},
-            "manifest_path": "/tmp/Cargo.toml",
-            "metadata": null,
-            "publish": null,
-            "authors": [],
-            "categories": [],
-            "keywords": [],
-            "readme": null,
-            "repository": null,
-            "homepage": null,
-            "documentation": null,
-            "edition": "2021",
-            "links": null,
-            "default_run": null,
-            "rust_version": null
-        }))
-        .unwrap()
+    fn mock_node(name: &str, targets: Vec<BuckalTarget>) -> BuckalNode {
+        BuckalNode {
+            package_id: PackageId {
+                repr: format!("{} 0.1.0 (registry+...)", name),
+            },
+            name: name.to_string(),
+            version: "0.1.0".to_string(),
+            features: vec![],
+            kind: NodeKind::FirstParty {
+                relative_path: "".to_string(),
+            },
+            edition: "2021".to_string(),
+            deps: vec![],
+            manifest_path: Utf8PathBuf::from("/tmp/Cargo.toml"),
+            targets,
+            source: None,
+            links: None,
+            checksum: None,
+        }
+    }
+
+    fn empty_resolve() -> BuckalResolve {
+        BuckalResolve {
+            dag: Dag::new(),
+            index_map: HashMap::new(),
+        }
     }
 
     #[test]
     fn test_buckify_root_node_name_collision() {
-        let lib = mock_target("foo", TargetKind::Lib);
-        let bin = mock_target("foo", TargetKind::Bin);
-        let pkg = mock_package("foo", vec![lib, bin]);
+        let lib = mock_target("foo", "lib");
+        let bin = mock_target("foo", "bin");
 
-        let mut packages_map = HashMap::new();
-        packages_map.insert(pkg.id.clone(), pkg.clone());
-
-        let node: Node = serde_json::from_value(serde_json::json!({
-            "id": pkg.id.clone(),
-            "deps": [],
-            "dependencies": [],
-            "features": []
-        }))
-        .unwrap();
+        let node = mock_node("foo", vec![lib, bin]);
 
         let ctx = BuckalContext {
-            packages_map,
-            nodes_map: HashMap::new(),
-            root: Some(pkg.clone()),
+            root: None,
+            resolve: empty_resolve(),
             repo_config: RepoConfig {
                 ignore_tests: false,
                 ..RepoConfig::default()
             },
-            checksums_map: HashMap::new(),
             workspace_root: Utf8PathBuf::from("/tmp"),
             no_merge: false,
         };
@@ -434,32 +400,19 @@ mod tests {
 
     #[test]
     fn test_buckify_root_node_test_deps_lib_alias() {
-        let lib = mock_target("foo", TargetKind::Lib);
-        let bin = mock_target("foo", TargetKind::Bin);
-        let test = mock_target("integration_test", TargetKind::Test);
+        let lib = mock_target("foo", "lib");
+        let bin = mock_target("foo", "bin");
+        let test = mock_target("integration_test", "test");
 
-        let pkg = mock_package("foo", vec![lib, bin, test]);
-
-        let mut packages_map = HashMap::new();
-        packages_map.insert(pkg.id.clone(), pkg.clone());
-
-        let node: Node = serde_json::from_value(serde_json::json!({
-            "id": pkg.id.clone(),
-            "deps": [],
-            "dependencies": [],
-            "features": []
-        }))
-        .unwrap();
+        let node = mock_node("foo", vec![lib, bin, test]);
 
         let ctx = BuckalContext {
-            packages_map,
-            nodes_map: HashMap::new(),
-            root: Some(pkg.clone()),
+            root: None,
+            resolve: empty_resolve(),
             repo_config: RepoConfig {
                 ignore_tests: false,
                 ..RepoConfig::default()
             },
-            checksums_map: HashMap::new(),
             workspace_root: Utf8PathBuf::from("/tmp"),
             no_merge: false,
         };

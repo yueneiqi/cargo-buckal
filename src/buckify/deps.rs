@@ -1,7 +1,6 @@
 use std::{collections::BTreeSet as Set, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
-use cargo_metadata::{DependencyKind, Node, NodeDep, Package, Target};
 
 use crate::{
     buck::{CargoTargetKind, RustRule},
@@ -9,38 +8,39 @@ use crate::{
     buckify::actions::is_third_party,
     context::BuckalContext,
     platform::{Os, oses_from_platform, platform_is_target_only},
+    resolve::{BuckalDep, BuckalNode, BuckalTarget},
     utils::{get_buck2_root, get_vendor_path_relative},
 };
 
-pub(super) fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: DependencyKind) -> bool {
+/// Check if a dependency kind string matches the expected target kind.
+pub(super) fn dep_kind_matches(target_kind: CargoTargetKind, dep_kind: &str) -> bool {
     match target_kind {
-        CargoTargetKind::CustomBuild => dep_kind == DependencyKind::Build,
+        CargoTargetKind::CustomBuild => dep_kind == "Build",
         // Cargo test targets can depend on both dev-deps and regular deps.
-        CargoTargetKind::Test => {
-            dep_kind == DependencyKind::Development || dep_kind == DependencyKind::Normal
-        }
-        _ => dep_kind == DependencyKind::Normal,
+        CargoTargetKind::Test => dep_kind == "Development" || dep_kind == "Normal",
+        _ => dep_kind == "Normal",
     }
 }
 
-fn get_lib_targets(package: &Package) -> Vec<&Target> {
-    package
-        .targets
+fn get_lib_targets(node: &BuckalNode) -> Vec<&BuckalTarget> {
+    node.targets
         .iter()
         .filter(|t| {
-            t.kind.contains(&cargo_metadata::TargetKind::Lib)
-                || t.kind.contains(&cargo_metadata::TargetKind::CDyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::DyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::RLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::StaticLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::ProcMacro)
+            t.kind.iter().any(|k| {
+                k == "lib"
+                    || k == "cdylib"
+                    || k == "dylib"
+                    || k == "rlib"
+                    || k == "staticlib"
+                    || k == "proc-macro"
+            })
         })
         .collect()
 }
 
-fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
+fn resolve_first_party_label(dep_node: &BuckalNode) -> Result<String> {
     let buck2_root = get_buck2_root().context("failed to get buck2 root")?;
-    let manifest_path = PathBuf::from(&dep_package.manifest_path);
+    let manifest_path = PathBuf::from(dep_node.manifest_path.as_str());
     let manifest_dir = manifest_path
         .parent()
         .context("manifest_path should always have a parent directory")?;
@@ -57,18 +57,18 @@ fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
         // Normalize path separators for Buck2 (always use forward slashes)
         .replace('\\', "/");
 
-    let dep_bin_targets: Vec<_> = dep_package
+    let dep_bin_targets: Vec<_> = dep_node
         .targets
         .iter()
-        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Bin))
+        .filter(|t| t.kind.iter().any(|k| k == "bin"))
         .collect();
 
-    let dep_lib_targets = get_lib_targets(dep_package);
+    let dep_lib_targets = get_lib_targets(dep_node);
 
     if dep_lib_targets.len() != 1 {
         bail!(
             "Expected exactly one library target for dependency {}, but found {}",
-            dep_package.name,
+            dep_node.name,
             dep_lib_targets.len()
         );
     }
@@ -78,7 +78,10 @@ fn resolve_first_party_label(dep_package: &Package) -> Result<String> {
     Ok(format!("//{relative_path}:{buckal_name}"))
 }
 
-fn resolve_buckal_name(dep_bin_targets: &[&Target], dep_lib_targets: &[&Target]) -> String {
+fn resolve_buckal_name(
+    dep_bin_targets: &[&BuckalTarget],
+    dep_lib_targets: &[&BuckalTarget],
+) -> String {
     if dep_bin_targets
         .iter()
         .any(|b| b.name == dep_lib_targets[0].name)
@@ -89,8 +92,8 @@ fn resolve_buckal_name(dep_bin_targets: &[&Target], dep_lib_targets: &[&Target])
     }
 }
 
-fn resolve_dep_label(dep: &NodeDep, dep_package: &Package) -> Result<(String, Option<String>)> {
-    let dep_package_name = dep_package.name.to_string();
+fn resolve_dep_label(dep: &BuckalDep, dep_node: &BuckalNode) -> Result<(String, Option<String>)> {
+    let dep_package_name = dep_node.name.to_string();
     let is_renamed = dep.name != dep_package_name.replace("-", "_");
     let alias = if is_renamed {
         Some(dep.name.clone())
@@ -98,11 +101,11 @@ fn resolve_dep_label(dep: &NodeDep, dep_package: &Package) -> Result<(String, Op
         None
     };
 
-    if !is_third_party(dep_package) {
-        let label = resolve_first_party_label(dep_package).with_context(|| {
+    if !is_third_party(dep_node) {
+        let label = resolve_first_party_label(dep_node).with_context(|| {
             format!(
                 "failed to resolve first-party label for `{}`",
-                dep_package.name
+                dep_node.name
             )
         })?;
         Ok((label, alias))
@@ -111,8 +114,8 @@ fn resolve_dep_label(dep: &NodeDep, dep_package: &Package) -> Result<(String, Op
         Ok((
             format!(
                 "//{}:{}",
-                get_vendor_path_relative(&dep_package.id)?,
-                dep_package.name
+                get_vendor_path_relative(&dep_node.package_id)?,
+                dep_node.name
             ),
             alias,
         ))
@@ -200,12 +203,13 @@ fn insert_dep(
 
 pub(super) fn set_deps(
     rust_rule: &mut dyn RustRule,
-    node: &Node,
+    node: &BuckalNode,
     kind: CargoTargetKind,
     ctx: &BuckalContext,
 ) -> Result<()> {
     for dep in &node.deps {
-        let Some(dep_package) = ctx.packages_map.get(&dep.pkg) else {
+        // Look up the dep node from the resolve DAG
+        let Some(dep_node) = ctx.resolve.get(&dep.pkg) else {
             continue;
         };
 
@@ -216,14 +220,17 @@ pub(super) fn set_deps(
         for dk in dep
             .dep_kinds
             .iter()
-            .filter(|dk| dep_kind_matches(kind, dk.kind))
+            .filter(|dk| dep_kind_matches(kind, &dk.kind))
         {
             match &dk.target {
                 None => unconditional = true,
-                Some(platform) => {
-                    let oses = oses_from_platform(platform);
+                Some(platform_str) => {
+                    use std::str::FromStr;
+                    let platform = cargo_platform::Platform::from_str(platform_str)
+                        .expect("failed to parse platform");
+                    let oses = oses_from_platform(&platform);
                     if oses.is_empty() {
-                        if platform_is_target_only(platform) {
+                        if platform_is_target_only(&platform) {
                             has_unsupported_platform = true;
                             continue;
                         }
@@ -240,16 +247,16 @@ pub(super) fn set_deps(
                 buckal_note!(
                     "Dependency '{}' (package '{}') targets only unsupported platforms and will be omitted.",
                     dep.name,
-                    dep_package.name
+                    dep_node.name
                 );
             }
             continue;
         }
 
-        let (target_label, alias) = resolve_dep_label(dep, dep_package).with_context(|| {
+        let (target_label, alias) = resolve_dep_label(dep, dep_node).with_context(|| {
             format!(
                 "failed to resolve dependency label for '{}' (package '{}')",
-                dep.name, dep_package.name
+                dep.name, dep_node.name
             )
         })?;
 
@@ -265,28 +272,21 @@ pub(super) fn set_deps(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cargo_metadata::TargetKind;
 
-    fn mock_target(name: &str, kind: TargetKind) -> Target {
-        // Target struct construction is verbose, using a helper or json deserialization might be easier
-        // but let's try strict construction if possible, or use serde_json
-        serde_json::from_value(serde_json::json!({
-            "name": name,
-            "kind": [kind],
-            "crate_types": [],
-            "required_features": [],
-            "src_path": "/tmp/dummy.rs",
-            "edition": "2021",
-            "doctest": true,
-            "test": true
-        }))
-        .unwrap()
+    fn mock_target(name: &str, kind: &str) -> BuckalTarget {
+        BuckalTarget {
+            name: name.to_string(),
+            kind: vec![kind.to_string()],
+            src_path: cargo_metadata::camino::Utf8PathBuf::from("/tmp/dummy.rs"),
+            doctest: true,
+            test: true,
+        }
     }
 
     #[test]
     fn test_resolve_buckal_name_with_collision() {
-        let lib = mock_target("foo", TargetKind::Lib);
-        let bin = mock_target("foo", TargetKind::Bin);
+        let lib = mock_target("foo", "lib");
+        let bin = mock_target("foo", "bin");
 
         let lib_targets = vec![&lib];
         let bin_targets = vec![&bin];
@@ -297,8 +297,8 @@ mod tests {
 
     #[test]
     fn test_resolve_buckal_name_without_collision() {
-        let lib = mock_target("foo", TargetKind::Lib);
-        let bin = mock_target("bar", TargetKind::Bin);
+        let lib = mock_target("foo", "lib");
+        let bin = mock_target("bar", "bin");
 
         let lib_targets = vec![&lib];
         let bin_targets = vec![&bin];

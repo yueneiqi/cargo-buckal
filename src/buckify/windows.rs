@@ -1,6 +1,5 @@
 use std::{collections::BTreeSet as Set, vec};
 
-use cargo_metadata::Package;
 use starlark_syntax::codemap::{Pos, Span, Spanned};
 use starlark_syntax::syntax::ast::{
     ArgumentP, AstExpr, AstLiteral, AstNoPayload, AstStmt, CallArgsP, ExprP, IdentP, Stmt,
@@ -9,6 +8,7 @@ use starlark_syntax::syntax::module::AstModuleFields;
 use starlark_syntax::syntax::{AstModule, Dialect};
 
 use crate::context::BuckalContext;
+use crate::resolve::BuckalNode;
 use crate::utils::{UnwrapOrExit, get_vendor_path_relative};
 
 #[derive(Default)]
@@ -20,19 +20,19 @@ struct WindowsImportLibFlags {
 pub(super) fn patch_root_windows_rustc_flags(
     mut buck_content: String,
     ctx: &BuckalContext,
-    root: &Package,
+    root: &BuckalNode,
 ) -> String {
     let bin_names: Vec<String> = root
         .targets
         .iter()
-        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Bin))
+        .filter(|t| t.kind.iter().any(|k| k == "bin"))
         .map(|t| t.name.clone())
         .collect();
 
     let mut rust_test_names: Set<String> = root
         .targets
         .iter()
-        .filter(|t| t.kind.contains(&cargo_metadata::TargetKind::Test))
+        .filter(|t| t.kind.iter().any(|k| k == "test"))
         .map(|t| t.name.clone())
         .collect();
 
@@ -40,12 +40,14 @@ pub(super) fn patch_root_windows_rustc_flags(
         .targets
         .iter()
         .filter(|t| {
-            t.kind.contains(&cargo_metadata::TargetKind::Lib)
-                || t.kind.contains(&cargo_metadata::TargetKind::CDyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::DyLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::RLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::StaticLib)
-                || t.kind.contains(&cargo_metadata::TargetKind::ProcMacro)
+            t.kind.iter().any(|k| {
+                k == "lib"
+                    || k == "cdylib"
+                    || k == "dylib"
+                    || k == "rlib"
+                    || k == "staticlib"
+                    || k == "proc-macro"
+            })
         })
         .collect();
 
@@ -91,15 +93,15 @@ fn windows_import_lib_flags(ctx: &BuckalContext) -> WindowsImportLibFlags {
 
     let push_build_script_rustc_flags = |package_name: &str, out: &mut Vec<String>| {
         let mut matches: Vec<_> = ctx
-            .packages_map
-            .values()
-            .filter(|p| p.name.to_string() == package_name)
+            .resolve
+            .nodes()
+            .filter(|n| n.name == package_name)
             .collect();
         matches.sort_by(|a, b| a.version.cmp(&b.version));
-        for package in matches {
+        for node in matches {
             out.push(format!(
                 "@$(location //{}:build-script-run[rustc_flags])",
-                get_vendor_path_relative(&package.id).unwrap_or_exit()
+                get_vendor_path_relative(&node.package_id).unwrap_or_exit()
             ));
         }
     };
